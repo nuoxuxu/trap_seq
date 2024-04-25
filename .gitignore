@@ -1,0 +1,23 @@
+# data and intermediate files
+data/
+proc/
+
+# binaries and images
+results/figures
+
+# VS code-related
+*workspace
+
+# RStudio-related
+.cache/
+.config/
+.local/
+tmp/
+rstudio-server.sh
+salmon/
+
+# conda environment
+env/
+
+# snakemake
+.snakemake/
