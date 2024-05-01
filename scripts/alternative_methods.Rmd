@@ -35,13 +35,13 @@ txdb <- makeTxDbFromGFF("/scratch/s/shreejoy/nxu/Genomic_references/hg38/Raw/Hom
 k <- keys(txdb, keytype = "TXNAME")
 tx2gene <- AnnotationDbi::select(txdb, k, "GENEID", "TXNAME")
 tx2gene <- bind_rows(tx2gene, data.frame(TXNAME = c("EGFP"), GENEID = c("EGFP")))
-files <- list.files("salmon_with_eGFP/compiled_quants_egfp", full.names = TRUE)
+files <- list.files("proc/salmon_with_eGFP/compiled_quants_egfp", full.names = TRUE)
 names(files) <- stringr::str_extract(files, "(?<=/)[^/]+(?=_S)")
 txi <- tximport(files, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRUE)
 
 samples <- names(files)
 assay <- str_extract(files, "IP|Input")
-condition <- ifelse(grepl("_", samples), "PTEN_KO", "WT")
+condition <- ifelse(str_count(samples, "_") == 1, "PTEN_KO", "WT")
 coldata <- data.frame(samples = samples, assay = assay, condition = condition)
 dds <- DESeqDataSetFromTximport(txi, coldata, design = ~ samples)
 dds <- DESeq2::estimateSizeFactors(dds)
@@ -53,6 +53,26 @@ saveRDS(dds, "proc/dds.rds")
 dds <- readRDS("proc/dds.rds")
 symbols <- mapIds(org.Hs.eg.db, keys = keys(org.Hs.eg.db, "ENSEMBL"),
   column = c('SYMBOL'), keytype = 'ENSEMBL')
+```
+
+
+# The interaction term approach in DESeq2
+
+## Running DESeq
+```{r results}
+colData(dds)$assay <- factor(colData(dds)$assay)
+colData(dds)$condition <- factor(colData(dds)$condition)
+design(dds) <- formula(~ assay + condition + assay:condition)
+# dds <- DESeq(dds, test="LRT", reduced = ~ assay + condition)
+dds <- DESeq(dds)
+
+res <- results(dds)
+res %>%
+  as.data.frame() %>% 
+  filter(padj<0.05) %>% 
+  View()
+# getting normalized counts
+counts(dds, normalized = TRUE) %>% as.data.frame() %>% write.csv("proc/normalized_counts.csv")
 ```
 
 # Exploratory analysis and visualization
@@ -100,22 +120,6 @@ topGene <- rownames(res)[which.min(res$padj)]
 plotCounts(dds, gene = "ENSG00000174469", intgroup=c("condition"))
 ```
 
-# The interaction term approach in DESeq2
-
-## Running DESeq
-```{r results}
-colData(dds)$assay <- factor(colData(dds)$assay)
-colData(dds)$condition <- factor(colData(dds)$condition)
-design(dds) <- formula(~ assay + condition + assay:condition)
-dds <- DESeq(dds, test="LRT", reduced = ~ assay + condition)
-res <- results(dds)
-
-# getting normalized counts
-counts(dds, normalized = TRUE) %>% as.data.frame() %>% write.csv("proc/normalized_counts.csv") 
-```
-
-## Eploratory figures
-
 MA plot
 ```{r plotMA}
 DESeq2::plotMA(res)
@@ -129,13 +133,22 @@ res$SYMBOL <- ifelse(is.na(indices), rownames(res), symbols[indices])
 
 ```{r volcano-plot}
 EnhancedVolcano(
+  old_res,
+  lab = old_res$SYMBOL,
+  x = 'log2FoldChange',
+  y = 'pvalue',
+  pCutoff = 0.1,
+  title = 'Interaction approach in DESeq2'
+  )
+
+EnhancedVolcano(
   res,
   lab = res$SYMBOL,
   x = 'log2FoldChange',
   y = 'pvalue',
   pCutoff = 0.1,
   title = 'Interaction approach in DESeq2'
-  )
+  )  
 ```
 
 ```{r rank-genes}
@@ -143,9 +156,9 @@ resLFC <- lfcShrink(dds, coef="condition_WT_vs_PTEN_KO", type="apeglm")
 resLFC %>%
   as.data.frame() %>%
   mutate(SYMBOL = symbols[rownames(.)]) %>% 
-  # dplyr::filter(padj < 0.05) %>%
+  dplyr::filter(padj < 0.05) %>%
   arrange(desc(log2FoldChange)) %>% 
-  write.csv("proc/interaction_term_results.csv")
+  View()
 ```
 
 ```{r plotCounts}
