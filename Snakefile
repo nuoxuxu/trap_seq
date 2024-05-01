@@ -1,10 +1,12 @@
 import os
 from pathlib import Path
 
-flist = [path for path in Path("data/WEN26595.20240222/240214_A02072_0139_AH2M75DSXC").iterdir() if path.name.endswith("gz")]
+flist = [path for path in Path("data/240214_A02072_0139_AH2M75DSXC").iterdir() if path.name.endswith("gz")]
 sample_list = list(set([str(path).rsplit("_", 3)[0].split("/")[-1] for path in flist]))
 
-localrules: generate_input_text_file
+#TODO: change paths, salmon results should be in data/
+
+localrules: generate_input_text_file, generate_dds, RE_quant, rodriguez_results, get_interaction_results
 
 rule all:
     input:
@@ -23,10 +25,10 @@ rule star_index:
     shell: "STAR --runThreadN 80 --runMode genomeGenerate --genomeDir {output} --genomeFastaFiles {input.genome_fasta_files} --sjdbGTFfile {input.annotations_gtf} --sjdbOverhang 100"
 
 def get_fq1(wildcards):
-    return f"data/WEN26595.20240222/240214_A02072_0139_AH2M75DSXC/{wildcards.sample}_L004_R1_001.fastq.gz"
+    return f"data/240214_A02072_0139_AH2M75DSXC/{wildcards.sample}_L004_R1_001.fastq.gz"
 
 def get_fq2(wildcards):
-    return f"data/WEN26595.20240222/240214_A02072_0139_AH2M75DSXC/{wildcards.sample}_L004_R2_001.fastq.gz"
+    return f"data/240214_A02072_0139_AH2M75DSXC/{wildcards.sample}_L004_R2_001.fastq.gz"
 
 rule align:
     input:
@@ -68,3 +70,33 @@ rule rMATS:
     resources:
         runtime="5h"
     shell: "rmats.py --gtf {input.gtf} --b1 {input.B1} --b2 {input.B2} --readLength 151 --od {output[0]} --tmp {output[1]} --nthread 80"
+
+rule generate_dds:
+    input: 
+        gtf_path=Path(os.environ["GENOMIC_DATA_DIR"]).joinpath("Ensembl/Human/Release_104/Raw/Homo_sapiens.GRCh38.104.gtf"),
+        salmon_results="data/salmon_with_eGFP/compiled_quants_egfp"
+    output: "proc/dds.rds"
+    conda: "patch_seq_spl"
+    script: "scripts/01_generate_dds.R"
+
+rule RE_quant:
+    input: "proc/dds.rds"
+    output:
+        RE_unormalized="results/RE_quant/linux_RE_unormalized.csv",
+        RE_normalized="results/RE_quant/linux_RE_normalized.csv"
+    conda: "patch_seq_spl"
+    script: "scripts/02_RE_quant.R"
+        
+rule rodriguez_results:
+    input: "results/RE_quant/{os}_RE_normalized.csv"
+    output: "results/RE_quant/{os}_results.csv"
+    conda: "patch_seq_spl"
+    script: "scripts/rodriguez_results.R"
+
+rule get_interaction_results:
+    input: "proc/dds.rds"
+    output: 
+        "results/interaction/raw_interaction_results.csv",
+        "results/interaction/shrink_interaction_results.csv"
+    conda: "patch_seq_spl"
+    script: "scripts/03_interaction.R"

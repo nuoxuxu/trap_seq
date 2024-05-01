@@ -1,0 +1,47 @@
+---
+title: "Comparing results from quantilile.normalizes"
+output:
+  html_notebook:
+    toc: true
+    number_sections: true
+    theme: readable
+author: Nuo Xu
+---
+
+# Preparation
+
+## Loading libraries
+
+```{r load-libraries, message=FALSE, warning=FALSE, echo=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tximport)
+library(GenomicFeatures)
+library(tidyr)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(org.Hs.eg.db)
+library(EnhancedVolcano)
+```
+
+```{r}
+linux <- read.csv("results/results_Octavia.csv")
+windows <- read.csv("results/RE_quant.norm_20240419.csv", row.names = 1)
+```
+
+```{r}
+windows %>% 
+    pivot_longer(cols = everything(), names_to = "sample", values_to = "value") %>%
+    mutate(value = log(value)) %>%
+        ggplot(aes(x=sample, y=value)) +
+            geom_boxplot() +
+            scale_y_continuous(limits = c(-7, 3))
+
+windows %>%
+    pivot_longer(cols = everything(), names_to = "sample", values_to = "value") %>%
+    mutate(value = log(value)) %>%
+        ggplot(aes(x=sample, y=value)) +
+            geom_boxplot() +
+            scale_y_continuous(limits = c(-7, 3))
+```

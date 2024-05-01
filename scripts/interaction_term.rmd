@@ -37,7 +37,7 @@ txdb <- makeTxDbFromGFF("/scratch/s/shreejoy/nxu/Genomic_references/hg38/Raw/Hom
 k <- keys(txdb, keytype = "TXNAME")
 tx2gene <- AnnotationDbi::select(txdb, k, "GENEID", "TXNAME")
 tx2gene <- bind_rows(tx2gene, data.frame(TXNAME = c("EGFP"), GENEID = c("EGFP")))
-files <- list.files("salmon_with_eGFP/compiled_quants_egfp", full.names = TRUE)
+files <- list.files("proc/salmon_with_eGFP/compiled_quants_egfp", full.names = TRUE)
 names(files) <- stringr::str_extract(files, "\\d+(?:_\\d+)?")
 txi <- tximport(files, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRUE)
 
@@ -49,19 +49,13 @@ condition <- factor(condition, levels = c("PTEN_KO", "WT"))
 coldata <- data.frame(samples = samples, assay = assay, condition = condition)
 dds <- DESeqDataSetFromTximport(txi, coldata, design = ~ assay + condition + assay:condition)
 dds <- DESeq2::estimateSizeFactors(dds)
-
-# save DESeqDataSet
 saveRDS(dds, "proc/dds.rds")
-
-# save normalized counts
-counts(dds, normalized = TRUE) %>% as.data.frame() %>% write.csv("proc/normalized_counts.csv")
 ```
 
 ## Load DESeqDataSet and gene symbols
+
 ```{r}
 dds <- readRDS("proc/dds.rds")
-symbols <- mapIds(org.Hs.eg.db, keys = keys(org.Hs.eg.db, "ENSEMBL"),
-  column = c('SYMBOL'), keytype = 'ENSEMBL')
 ```
 
 # The interaction term approach in DESeq2
@@ -77,6 +71,9 @@ res <- results(dds)
 
 Getting gene symbols
 ```{r}
+symbols <- mapIds(org.Hs.eg.db, keys = keys(org.Hs.eg.db, "ENSEMBL"),
+  column = c('SYMBOL'), keytype = 'ENSEMBL')
+
 indices <- match(rownames(res), names(symbols))
 res$SYMBOL <- ifelse(is.na(indices), rownames(res), symbols[indices])
 ```
@@ -93,6 +90,12 @@ EnhancedVolcano(
   )
 ```
 
+```{r}
+res %>% 
+  as.data.frame() %>% 
+  filter(padj < 0.05) %>% 
+  View()
+```
 ## Get gene rankings
 ```{r compare}
 normalized_counts <- counts(dds, normalized = TRUE)
@@ -103,21 +106,42 @@ fcRE <- up_vector / down_vector
 lfcRE <- log2(fcRE)
 
 res$lfcRE <- lfcRE[rownames(res)]
-res <- res %>% as.data.frame()
-res %>% filter(SYMBOL == "CNTNAP2")
-res %>% filter(SYMBOL == "CHRNA7")
 ```
 
 ```{r}
 res %>% as.data.frame() %>% write.csv("proc/interaction_term_results.csv")
 ```
 
+```{r}
+res_old <- read.csv("results/interaction_term_results_oldversion.csv", row.names = 1)
+res <- read.csv("proc/interaction_term_results.csv", row.names = 1)
+
+indices <- match(rownames(res), names(symbols))
+res$SYMBOL <- ifelse(is.na(indices), rownames(res), symbols[indices])
+
+indices <- match(rownames(res_old), names(symbols))
+res_old$SYMBOL <- ifelse(is.na(indices), rownames(res_old), symbols[indices])
+
+res <- res %>%
+  as.data.frame() %>%
+  filter(padj < 0.05) %>%
+  pull(SYMBOL)
+
+res_old <- res_old %>%
+  as.data.frame() %>%
+  filter(padj < 0.05) %>%
+  pull(SYMBOL)
+
+intersect(res, res_old) %>% length()
+
+sum(res_old %in% res)
+
+```
 ```{r rank-genes}
-# resLFC <- lfcShrink(dds, contrast="assayInput.conditionWT")
-# resLFC %>%
-#   as.data.frame() %>%
-#   mutate(SYMBOL = symbols[rownames(.)]) %>%
-#   # dplyr::filter(padj < 0.05) %>%
-#   arrange(desc(log2FoldChange)) %>%
-#   write.csv("proc/interaction_term_results.csv")
+resLFC <- lfcShrink(dds, coef="assayInput.conditionWT")
+resLFC %>%
+  as.data.frame() %>%
+  mutate(SYMBOL = symbols[rownames(.)]) %>%
+  dplyr::filter(padj < 0.05) %>%
+  arrange(desc(log2FoldChange)) %>% View()
 ```
