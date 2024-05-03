@@ -89,10 +89,10 @@ rule RE_quant:
 rule rodriguez_results:
     input: 
         "results/RE_quant/RE_normalized.csv",
-        Path(os.environ["GENOMIC_DATA_DIR"]).joinpath("hg38/Raw/Homo_sapiens.GRCh38.111.gtf")
+        Path(os.environ["GENOMIC_DATA_DIR"]).joinpath("Ensembl/Human/Release_104/Raw/Homo_sapiens.GRCh38.104.gtf")
     output: "results/RE_quant/rodriguez_results.csv"
     conda: "patch_seq_spl"
-    script: "scripts/rodriguez_results.R"
+    script: "scripts/03_rodriguez_results.R"
 
 rule get_interaction_results:
     input: "proc/dds.rds"
