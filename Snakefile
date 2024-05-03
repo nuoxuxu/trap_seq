@@ -10,8 +10,7 @@ localrules: generate_input_text_file, generate_dds, RE_quant, rodriguez_results,
 
 rule all:
     input:
-        "proc/rMATS_results",
-        "proc/tmp"
+        "results/RE_quant/rodriguez_results.csv"
 
 rule star_index:
     input:
@@ -82,14 +81,16 @@ rule generate_dds:
 rule RE_quant:
     input: "proc/dds.rds"
     output:
-        RE_unormalized="results/RE_quant/linux_RE_unormalized.csv",
-        RE_normalized="results/RE_quant/linux_RE_normalized.csv"
+        RE="results/RE_quant/RE.csv",
+        RE_normalized="results/RE_quant/RE_normalized.csv"
     conda: "patch_seq_spl"
     script: "scripts/02_RE_quant.R"
         
 rule rodriguez_results:
-    input: "results/RE_quant/{os}_RE_normalized.csv"
-    output: "results/RE_quant/{os}_results.csv"
+    input: 
+        "results/RE_quant/RE_normalized.csv",
+        Path(os.environ["GENOMIC_DATA_DIR"]).joinpath("hg38/Raw/Homo_sapiens.GRCh38.111.gtf")
+    output: "results/RE_quant/rodriguez_results.csv"
     conda: "patch_seq_spl"
     script: "scripts/rodriguez_results.R"
 

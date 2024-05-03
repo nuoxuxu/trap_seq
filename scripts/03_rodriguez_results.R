@@ -1,7 +1,7 @@
 library(stringr)
 library(dplyr)
 
-gtf_path <- "/scratch/s/shreejoy/nxu/Genomic_references/hg38/Raw/Homo_sapiens.GRCh38.111.gtf"
+gtf_path <- snakemake@input[[2]]
 annotation_from_gtf <- rtracklayer::import(gtf_path) %>%
     dplyr::as_tibble() %>%
     dplyr::filter(type == "gene") %>%
