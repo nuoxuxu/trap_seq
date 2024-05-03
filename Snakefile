@@ -72,7 +72,6 @@ rule rMATS:
 
 rule generate_dds:
     input: 
-        gtf_path=Path(os.environ["GENOMIC_DATA_DIR"]).joinpath("Ensembl/Human/Release_104/Raw/Homo_sapiens.GRCh38.104.gtf"),
         salmon_results="data/salmon_with_eGFP/compiled_quants_egfp"
     output: "proc/dds.rds"
     conda: "patch_seq_spl"

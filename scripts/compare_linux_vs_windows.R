@@ -1,25 +1,14 @@
----
-title: "Comparing results from quantilile.normalizes"
-output:
-  html_notebook:
-    toc: true
-    number_sections: true
-    theme: readable
-author: Nuo Xu
----
-
 # Preparation
 
 ## Loading libraries
 
-```{r load-libraries, message=FALSE, warning=FALSE, echo=FALSE}
 library(dplyr)
 library(preprocessCore)
 library(stringr)
-```
 
-```{r}
-quantile_normalize <- function(df){
+## Define functions
+
+quantile_normalize <- function(df) {
     df %>%
         data.matrix() %>%
         preprocessCore::normalize.quantiles() %>%
@@ -35,11 +24,15 @@ get_results <- function(RE_normalized) {
     results <- data.frame(gene_id = names(log2_RE_FC), log2_RE_FC = log2_RE_FC, Z_score = Z_score)
     return(results)
 }
-```
-```{r}
-RE <- read.csv("results/RE_quant/linux_RE_unormalized.csv", row.names = 1)
 
-RE_normalized <- quantile_normalize(RE)
+## Load data
+
+dds <- readRDS("proc/dds.rds")
+
+# Calculate RE
+
+up_vec <- counts(dds, normalized=TRUE)[, colData(dds)$assay == "IP"]
+down_vec <- counts(dds, normalized=TRUE)[, colData(dds)$assay == "Input"]
+RE <- up_vec / down_vec
+RE_normalized <- preprocessCore::normalize.quantiles(RE, keep.names=TRUE)
 results <- get_results(RE_normalized)
-```
-

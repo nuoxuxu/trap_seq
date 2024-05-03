@@ -13,13 +13,6 @@ files <- list.files(snakemake@input[["salmon_results"]], full.names = TRUE)
 names(files) <- stringr::str_extract(files, "\\d{1,2}(_\\d)?")
 txi <- tximport(files, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRUE)
 
-# get gene symbols
-gtf_path <- snakemake@input[["gtf_path"]]
-annotation_from_gtf <- rtracklayer::import(gtf_path) %>%
-    dplyr::as_tibble() %>%
-    dplyr::filter(type == "gene") %>%
-    dplyr::select(gene_id, gene_name, gene_biotype)
-
 # filter
 filtered_count_matrix <- txi$counts[rowSums(txi$counts) != 0, ]
 filtered_count_matrix <- filtered_count_matrix[rowSums(filtered_count_matrix) >= 20, ]
