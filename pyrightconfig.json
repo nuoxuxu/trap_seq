@@ -1,0 +1,16 @@
+{
+    "include": [
+      "patch_seq_spl",
+      "scripts",
+      "src"
+    ],
+    "exclude": [
+      "**/__pycache__",
+      "data/**",
+      "proc/**",
+      "env/**",
+    ],
+    "stubPath": "typings",
+    "ignore": [
+    ]
+  }

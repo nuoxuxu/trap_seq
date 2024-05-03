@@ -2,7 +2,6 @@ library(dplyr)
 library(DESeq2)
 library(org.Hs.eg.db)
 
-
 dds <- readRDS(snakemake@input[[1]])
 symbols <- mapIds(org.Hs.eg.db,
   keys = keys(org.Hs.eg.db, "ENSEMBL"),

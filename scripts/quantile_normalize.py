@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 from utility.ryp import r, to_r, to_py
+from src.quantile_normalize import quantile_normalize
+
 r("library(dplyr)")
 
 def qn_R(RE):
@@ -32,54 +34,65 @@ def qn_python(RE):
     RE_normalized.index = RE.index 
     return RE_normalized
 
-# Test in Linux
+def get_results(RE, algorithm):
+    """Get results from raw RE scores
 
-## With cleaning
+    Args:
+        RE: pd.DataFrame
+        algorithm: str, either 'R', 'nxu' or 'huosan'
+
+    Returns:
+        pd.DataFrame
+    """
+    if algorithm == 'R':
+        RE_normalized = qn_R(RE)
+    elif algorithm == 'nxu':
+        RE_normalized = qn_python(RE)
+    elif algorithm == 'huosan':
+        RE_normalized = pd.DataFrame(quantile_normalize(RE),index = RE.index, columns = RE.columns)
+
+    # get results
+        
+    to_r(RE_normalized, "RE")
+    r("""
+    RE_KO <- RE[, stringr::str_detect(colnames(RE), "4_7|4_9|95_3")]
+    RE_WT <- RE[, stringr::str_detect(colnames(RE), "87|90|91")]
+
+    log2_RE_FC <- log(rowMeans(RE_KO, na.rm = TRUE) / rowMeans(RE_WT, na.rm = TRUE), 2)
+    Z_score <- rowMeans(RE_KO, na.rm = TRUE) - rowMeans(RE_WT, na.rm = TRUE) / sqrt(apply(RE_KO, 1, sd, na.rm = TRUE)**2 + apply(RE_WT, 1, sd, na.rm = TRUE)**2)
+
+    results <- data.frame(gene_id = row.names(RE), log2_RE_FC = log2_RE_FC, Z_score = Z_score)
+      """
+    )    
+    results = to_py("results", format='pandas')        
+    return results
+
+# load data
 
 RE = pd.read_csv("results/RE_quant/linux_RE_unormalized.csv", index_col=0)
 RE_clean = remove_inf_nan(RE)
-RE_normalized_py = qn_python(RE_clean)
-RE_normalized_R = qn_R(RE_clean)
 
-## Withiout cleaning
+pd.DataFrame(quantile_normalize(RE),index = RE.index, columns = RE.columns)
+
+get_results(RE, 'R')
+get_results(RE, 'huosan')
+
+to_py("RE_KO", format='pandas')
+to_py("RE_WT", format='pandas')
+to_py("log2_RE_FC", format='pandas')
+r('rowMeans(RE_KO, na.rm = TRUE) %>% head()')
+r('rowMeans(RE_WT, na.rm = TRUE) %>% head()')
+r('log(rowMeans(RE_KO, na.rm = TRUE) / rowMeans(RE_WT, na.rm = TRUE), 2) %>% head()')
+
+# Withiout cleaning
 
 RE_normalized_py = qn_python(RE)
 RE_normalized_R = qn_R(RE)
 
-to_r(RE_normalized_R, "RE")
+# With cleaning
 
-r(
-    """
-RE_KO <- RE[, stringr::str_detect(colnames(RE), "4_7|4_9|95_3")]
-RE_WT <- RE[, stringr::str_detect(colnames(RE), "87|90|91")]
-
-log2_RE_FC <- log(rowMeans(RE_KO, na.rm = TRUE) / rowMeans(RE_WT, na.rm = TRUE), 2)
-Z_score <- rowMeans(RE_KO, na.rm = TRUE) - rowMeans(RE_WT, na.rm = TRUE) / sqrt(apply(RE_KO, 1, sd, na.rm = TRUE)**2 + apply(RE_WT, 1, sd, na.rm = TRUE)**2)
-
-results <- data.frame(gene_id = row.names(RE), log2_RE_FC = log2_RE_FC, Z_score = Z_score)
-    """
-)
-
-r(
-    """    
-results %>%
-    filter_if(is.numeric, all_vars(!is.na(.) & !is.infinite(.))) %>%
-    filter(abs(Z_score) > 2 & abs(log2_RE_FC) > 0.2) %>%
-    arrange(desc(Z_score)) %>%
-    head()
-    """
-)
-
-results = to_py("results", format='pandas')
-
-remove_inf_nan(results)\
-    .query('abs(Z_score) > 2 & abs(log2_RE_FC) > 0.2')
-
-(RE_normalized.sum(axis=1) == 0).sum()
-
-
-# Test in Windows
-RE_clean.to_csv("proc/RE_clean.csv")
+RE_normalized_py = qn_python(RE_clean)
+RE_normalized_R = qn_R(RE_clean)
 
 # Plotting
 import seaborn as sns
