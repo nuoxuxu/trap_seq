@@ -6,7 +6,8 @@ __pycache__/
 !/data/salmon_with_eGFP/
 /data/salmon_with_eGFP/*
 !/data/salmon_with_eGFP/compiled_quants_egfp/
-proc/
+proc/*
+!proc/dds.rds
 
 # binaries and images
 results/figures
