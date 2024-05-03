@@ -1,0 +1,165 @@
+---
+title: "DESeq calculation of RE and shifts in RE"
+output:
+  html_notebook:
+    toc: true
+    number_sections: true
+    theme: readable
+author: Nuo Xu
+---
+
+Loading libraries
+```{r load-libraries}
+library(tximport)
+library(GenomicFeatures)
+library(magrittr)
+library(ggplot2)
+library(here)
+library(scales)
+library(dplyr)
+library(tidyr)
+library(DESeq2)
+library(stringr)
+library(SingleCellExperiment)
+```
+
+# Get gene count matrix from salmon output
+```{r}
+txdb <- makeTxDbFromGFF("/scratch/s/shreejoy/nxu/Genomic_references/hg38/Raw/Homo_sapiens.GRCh38.111.gtf")
+k <- keys(txdb, keytype = "TXNAME")
+tx2gene <- AnnotationDbi::select(txdb, k, "GENEID", "TXNAME")
+tx2gene <- bind_rows(tx2gene, data.frame(TXNAME = c("eGFP"), GENEID = c("eGFP")))
+files <- file.path(here("data/salmon_results"), list.files(here("data/salmon_results")), "quant.sf")
+names(files) <- gsub("_quant", "", list.files(here("data/salmon_results")))
+txi <- tximport(files, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRUE, )
+```
+
+# Reproducing Figure 1D from Rodriguez et al.
+
+Get TPM from txi object
+```{r}
+tpm <- txi$abundance
+IP_mtx <- tpm[, which(grepl("IP", colnames(tpm)))] %>% log10()
+IP_mtx <- data.frame(KO = rowMeans(IP_mtx[, c(1, 2, 6)]), WT = rowMeans(IP_mtx[, c(3, 4, 5)]))
+Input_mtx <- tpm[, which(grepl("Input", colnames(tpm)))]  %>% log10()
+Input_mtx <- data.frame(KO = rowMeans(Input_mtx[, c(1, 2, 6)]), WT = rowMeans(Input_mtx[, c(3, 4, 5)]))
+```
+
+Filter out genes with low TPM
+```{r}
+index_to_keep <- (rowSums(Input_mtx) > -2) & (rowSums(IP_mtx) > -2)
+Input_mtx <- Input_mtx[index_to_keep, ]
+IP_mtx <- IP_mtx[index_to_keep, ]
+```
+
+Pivot count matrices
+```{r}
+Input_mtx <- Input_mtx %>%
+    mutate(gene = rownames(.)) %>%
+    pivot_longer(cols = -gene, names_to = "condition", values_to = "Input")
+IP_mtx <- IP_mtx %>%
+    mutate(gene = rownames(.)) %>%
+    pivot_longer(cols = -gene, names_to = "condition", values_to = "IP")
+combined <- merge(Input_mtx, IP_mtx, by = c("gene", "condition"))
+```
+
+Plotting Figure 1D
+```{r}
+combined %>% ggplot(aes(x = Input, y = IP)) +
+    geom_point(alpha = 0.5) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+    facet_grid(cols = vars(condition)) +
+    xlab("Input RNA-seq (log10 TPM)") +
+    ylab("IP RNA-seq (log10 TPM)")
+ggsave("results/figures/Figure_1D.png")
+```   
+
+Plotting distribution of eGFP counts in IP vs input samples
+```{r}
+TPM <- txi$abundance
+eGFP <- TPM["eGFP", ]
+df <- data.frame(TPM = unname(eGFP), sample = str_extract(names(eGFP), "IP|Input") %>% unlist())
+ggplot(df, aes(x = sample, y = TPM)) +
+    geom_boxplot() +
+    geom_jitter(width=0.2, alpha=0.5)
+ggsave("results/figures/RE_distribution.png")
+```
+
+# Calculate RE and shifts in RE
+
+There are two methods for calculating log2 fold change in RE. The first method is described in Rodriguez et al. 2020, 
+which involves calculating RE for each replicate, using normalized counts obtained from DESeq2, then quantile normalize
+the resulting ratios. Finally the ratios for all replicates are averaged to get the final RE for that condition.
+RE fold change is the ratio of RE in WT vs PTEN_KO. The second method is to use the DESeq2 design matrix. Both methods involve
+creating a DEXSeqDataSet object.
+
+## Create DESeqDataSet
+
+```{r}
+samples <- names(files)
+assay <- str_extract(samples, "IP|Input")
+samples <- str_extract(samples, ".*(?=_I)")
+condition <- c(rep("PTEN_KO", 4), rep("WT", 6), rep("PTEN_KO", 2))
+coldata <- data.frame(samples = samples, assay = assay, condition = condition)
+dds <- DESeqDataSetFromTximport(txi, coldata, design = ~ samples)
+dds <- DESeq2::estimateSizeFactors(dds)
+```
+
+## First method
+
+Calculate RE
+```{r}
+up_vec <- counts(dds, normalized=TRUE)[, colData(dds)$assay == "IP"]
+down_vec <- counts(dds, normalized=TRUE)[, colData(dds)$assay == "Input"]
+RE <- up_vec / down_vec
+
+RE_quant.norm <- preprocessCore::normalize.quantiles(RE, keep.names=TRUE)
+```
+
+Figure 1H from Rodriguez et al. 2020 (before quantile normalization)
+```{r}
+fig_1H <- data.frame(
+    res_WT = rowMeans(res_WT, na.rm = TRUE) %>% unname(),
+    res_PTEN_KO = rowMeans(res_PTEN_KO, na.rm = TRUE) %>% unname())
+# remove rows that contain any invalid numbers
+to_remove <- apply(sapply(fig_1H, function(x) is.infinite(x)), 1, any) | apply(sapply(fig_1H, function(x) is.na(x)), 1, any)
+fig_1H <- fig_1H[!to_remove, ]
+scaled_fig_1H <- scale(fig_1H)
+scaled_fig_1H %>%
+    ggplot(aes(x = res_WT, y = res_PTEN_KO)) +
+    geom_point(alpha = 0.5) +
+    xlab("WT RE") +
+    ylab("PTEN_KO RE")
+ggsave("results/figures/Figure_1H.png")
+```    
+
+Calculate shifts in RE (log fold change and Z scores)
+```{r}
+RE_KO <- RE_quant.norm[, c(1, 2, 6)]
+RE_WT <- RE_quant.norm[, c(3, 4, 5)]
+
+log2_RE_FC <- log(rowMeans(RE_KO, na.rm = TRUE) / rowMeans(RE_WT, na.rm = TRUE), 2)
+Z_score <- rowMeans(RE_KO, na.rm = TRUE) - rowMeans(RE_WT, na.rm = TRUE) / sqrt(apply(RE_KO, 1, sd, na.rm = TRUE)**2 + apply(RE_WT, 1, sd, na.rm = TRUE)**2)
+```
+
+Write the results from first method to a csv file.
+```{r}
+results <- data.frame(gene_id = names(log2_RE_FC), log2_RE_FC = log2_RE_FC, Z_score = Z_score)
+# Obtain gene symbols
+gtf_path <- "/scratch/s/shreejoy/nxu/Genomic_references/hg38/Raw/Homo_sapiens.GRCh38.111.gtf"
+annotation_from_gtf <- rtracklayer::import(gtf_path) %>%
+    dplyr::as_tibble() %>%
+    dplyr::filter(type == "gene") %>%
+    dplyr::select(gene_id, gene_name, gene_biotype)
+# add gene symbols to the data frame
+results <- results %>% 
+    mutate(gene_id = rownames(results)) %>%
+    left_join(annotation_from_gtf, join_by(gene_id))
+# Selecting genes with significant shifts in RE. This is the same filtering threshold as in Rodriguez et al.
+results %>%
+    filter_if(is.numeric, all_vars(!is.na(.) & !is.infinite(.))) %>%
+    filter(abs(Z_score) > 2 & abs(log2_RE_FC) > 0.2) %>%
+    dim()
+
+write.csv(results, "results/results.csv")
+```

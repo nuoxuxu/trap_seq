@@ -2,10 +2,11 @@
 __pycache__/
 
 # data and intermediate files
-/data/*
-!/data/salmon_with_eGFP/
-/data/salmon_with_eGFP/*
-!/data/salmon_with_eGFP/compiled_quants_egfp/
+data/*
+!data/salmon_with_eGFP/
+data/salmon_with_eGFP/*
+!data/salmon_with_eGFP/compiled_quants_egfp/
+!data/salmon_results
 proc/*
 !proc/dds.rds
 
@@ -28,3 +29,4 @@ env/
 
 # snakemake
 .snakemake/
+data/salmon_results/.DS_Store

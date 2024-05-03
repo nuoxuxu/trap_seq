@@ -36,3 +36,10 @@ down_vec <- counts(dds, normalized=TRUE)[, colData(dds)$assay == "Input"]
 RE <- up_vec / down_vec
 RE_normalized <- preprocessCore::normalize.quantiles(RE, keep.names=TRUE)
 results <- get_results(RE_normalized)
+
+results %>% 
+    filter_if(is.numeric, all_vars(!is.na(.) & !is.infinite(.))) %>%
+    filter(abs(Z_score) > 2 & abs(log2_RE_FC) > 0.2) %>%
+    dim()
+
+write.csv(results, "proc/test.csv")
