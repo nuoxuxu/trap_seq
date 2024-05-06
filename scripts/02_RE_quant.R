@@ -2,7 +2,6 @@ library(DESeq2)
 library(preprocessCore)
 
 dds <- readRDS(snakemake@input[[1]])
-dds <- readRDS("proc/dds.rds")
 
 up_vec <- counts(dds, normalized=TRUE)[, colData(dds)$assay == "IP"]
 down_vec <- counts(dds, normalized=TRUE)[, colData(dds)$assay == "Input"]

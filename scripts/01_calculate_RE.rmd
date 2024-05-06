@@ -30,7 +30,7 @@ k <- keys(txdb, keytype = "TXNAME")
 tx2gene <- AnnotationDbi::select(txdb, k, "GENEID", "TXNAME")
 tx2gene <- bind_rows(tx2gene, data.frame(TXNAME = c("eGFP"), GENEID = c("eGFP")))
 files <- file.path(here("data/salmon_results"), list.files(here("data/salmon_results")), "quant.sf")
-names(files) <- gsub("_quant", "", list.files(here("data/salmon_results")))
+names(files) <- str_extract(list.files(here("data/salmon_results")), "(\\d+(_\\d+)?)")
 txi <- tximport(files, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRUE, )
 ```
 
@@ -96,10 +96,9 @@ creating a DEXSeqDataSet object.
 ## Create DESeqDataSet
 
 ```{r}
-samples <- names(files)
-assay <- str_extract(samples, "IP|Input")
-samples <- str_extract(samples, ".*(?=_I)")
-condition <- c(rep("PTEN_KO", 4), rep("WT", 6), rep("PTEN_KO", 2))
+samples <- factor(names(files), levels = c("4_7", "4_9", "95_3", "87", "90", "91"))
+assay <- factor(str_extract(files, "IP|Input"), levels = c("IP", "Input"))
+condition <- factor(ifelse(grepl("_", samples), "PTEN_KO", "WT"), levels = c("WT", "PTEN_KO"))
 coldata <- data.frame(samples = samples, assay = assay, condition = condition)
 dds <- DESeqDataSetFromTximport(txi, coldata, design = ~ samples)
 dds <- DESeq2::estimateSizeFactors(dds)

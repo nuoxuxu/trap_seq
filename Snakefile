@@ -72,29 +72,31 @@ rule rMATS:
 
 rule generate_dds:
     input: 
-        salmon_results="data/salmon_with_eGFP/compiled_quants_egfp"
-    output: "proc/dds.rds"
+        gtf_path=Path(os.environ["GENOMIC_DATA_DIR"]).joinpath("Ensembl/Human/Release_104/Raw/Homo_sapiens.GRCh38.104.gtf")
+    output: 
+        "proc/dds_wendy.rds",
+        "proc/dds_nuo.rds"
     conda: "patch_seq_spl"
     script: "scripts/01_generate_dds.R"
 
 rule RE_quant:
-    input: "proc/dds.rds"
+    input: "proc/dds_{source}.rds"
     output:
-        RE="results/RE_quant/RE.csv",
-        RE_normalized="results/RE_quant/RE_normalized.csv"
+        RE="results/RE_quant/{source}_RE.csv",
+        RE_normalized="results/RE_quant/{source}_RE_normalized.csv"
     conda: "patch_seq_spl"
     script: "scripts/02_RE_quant.R"
         
 rule rodriguez_results:
     input: 
-        "results/RE_quant/RE_normalized.csv",
+        "results/RE_quant/{source}_RE_normalized.csv",
         Path(os.environ["GENOMIC_DATA_DIR"]).joinpath("Ensembl/Human/Release_104/Raw/Homo_sapiens.GRCh38.104.gtf")
-    output: "results/RE_quant/rodriguez_results.csv"
+    output: "results/RE_quant/{source}_rodriguez_results.csv"
     conda: "patch_seq_spl"
     script: "scripts/03_rodriguez_results.R"
 
 rule get_interaction_results:
-    input: "proc/dds.rds"
+    input: "proc/dds_wendy.rds"
     output: 
         "results/interaction/raw_interaction_results.csv",
         "results/interaction/shrink_interaction_results.csv"
