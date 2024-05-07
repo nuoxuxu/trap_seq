@@ -25,7 +25,7 @@ rstudio-server.sh
 salmon/
 
 # conda environment
-env/
+envs/
 
 # snakemake
 .snakemake/
