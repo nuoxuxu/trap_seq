@@ -8,7 +8,8 @@ data/salmon_with_eGFP/*
 !data/salmon_with_eGFP/compiled_quants_egfp/
 !data/salmon_results
 proc/*
-!proc/dds.rds
+!proc/dds_nuo.rds
+!proc/dds_wendy.rds
 
 # binaries and images
 results/figures
