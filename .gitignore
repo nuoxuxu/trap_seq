@@ -12,7 +12,7 @@ proc/*
 !proc/dds_wendy.rds
 
 # binaries and images
-results/figures
+results/
 
 # VS code-related
 *workspace
