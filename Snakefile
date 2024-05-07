@@ -18,7 +18,7 @@ rule star_index:
         annotations_gtf=f"{os.environ['GENOMIC_DATA_DIR']}Ensembl/Human/Release_104/Raw/Homo_sapiens.GRCh38.104.gtf"
     output:
         directory(f"{os.environ['GENOMIC_DATA_DIR']}Ensembl/Human/Release_104/STAR_genomeDir")
-    conda: "trap_seq"
+    conda: "rMATS"
     resources:
         runtime="1h"
     shell: "STAR --runThreadN 80 --runMode genomeGenerate --genomeDir {output} --genomeFastaFiles {input.genome_fasta_files} --sjdbGTFfile {input.annotations_gtf} --sjdbOverhang 100"
@@ -65,7 +65,7 @@ rule rMATS:
     output:
         directory("proc/rMATS_results"),
         directory("proc/tmp")
-    conda: "trap_seq"
+    conda: "rMATS"
     resources:
         runtime="5h"
     shell: "rmats.py --gtf {input.gtf} --b1 {input.B1} --b2 {input.B2} --readLength 151 --od {output[0]} --tmp {output[1]} --nthread 80"
@@ -76,7 +76,7 @@ rule generate_dds:
     output: 
         "proc/dds_wendy.rds",
         "proc/dds_nuo.rds"
-    conda: "patch_seq_spl"
+    conda: "trap_seq"
     script: "scripts/01_generate_dds.R"
 
 rule RE_quant:
@@ -84,7 +84,7 @@ rule RE_quant:
     output:
         RE="results/RE_quant/{source}_RE.csv",
         RE_normalized="results/RE_quant/{source}_RE_normalized.csv"
-    conda: "patch_seq_spl"
+    conda: "trap_seq"
     script: "scripts/02_RE_quant.R"
         
 rule rodriguez_results:
@@ -92,7 +92,7 @@ rule rodriguez_results:
         "results/RE_quant/{source}_RE_normalized.csv",
         Path(os.environ["GENOMIC_DATA_DIR"]).joinpath("Ensembl/Human/Release_104/Raw/Homo_sapiens.GRCh38.104.gtf")
     output: "results/RE_quant/{source}_rodriguez_results.csv"
-    conda: "patch_seq_spl"
+    conda: "trap_seq"
     script: "scripts/03_rodriguez_results.R"
 
 rule get_interaction_results:
@@ -100,5 +100,5 @@ rule get_interaction_results:
     output: 
         "results/interaction/raw_interaction_results.csv",
         "results/interaction/shrink_interaction_results.csv"
-    conda: "patch_seq_spl"
+    conda: "trap_seq"
     script: "scripts/03_interaction.R"

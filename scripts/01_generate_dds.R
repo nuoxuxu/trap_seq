@@ -1,5 +1,4 @@
 library(tximport)
-library(dplyr)
 library(DESeq2)
 library(GenomicFeatures)
 library(stringr)
