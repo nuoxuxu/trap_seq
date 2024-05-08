@@ -41,6 +41,6 @@ files <- file.path(here("data/salmon_results"), list.files(here("data/salmon_res
 names(files) <- str_extract(list.files(here("data/salmon_results")), "(\\d+(_\\d+)?)")
 save_dds(files, tx2gene, snakemake@output[[3]])
 
-files <- list.files("data/salmon_with_eGFP/compiled_quants_egfp", full.names = TRUE)
+files <- file.path(here("data/salmon_results"), list.files(here("data/salmon_results")), "quant.sf")
 names(files) <- stringr::str_extract(files, "(\\d+(_\\d+)?)_(Input|IP)")
 save_txi(files, tx2gene, snakemake@output[[4]])

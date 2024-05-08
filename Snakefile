@@ -6,7 +6,7 @@ sample_list = list(set([str(path).rsplit("_", 3)[0].split("/")[-1] for path in f
 
 #TODO: change paths, salmon results should be in data/
 
-localrules: generate_input_text_file, generate_dds, RE_quant, rodriguez_results, get_interaction_results
+localrules: generate_input_text_file, generate_dds, get_interaction_results
 
 rule all:
     input:
