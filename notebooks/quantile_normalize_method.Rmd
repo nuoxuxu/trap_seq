@@ -60,7 +60,7 @@ get_RE <- function(txi, min_row_sum, clean = FALSE) {
     }
 }
 
-get_RE_normalized <- function(dds, min_row_sum, clean = FALSE) {
+get_RE_normalized <- function(txi, min_row_sum, clean = FALSE) {
     filtered_counts <- txi$counts[rowSums(txi$counts) > min_row_sum, ]
     filtered_counts <- filtered_counts %>%
         as.data.frame() %>%
@@ -83,7 +83,10 @@ get_RE_normalized <- function(dds, min_row_sum, clean = FALSE) {
     if (clean == TRUE) {
         RE <- RE[!apply(RE, 1, function(x) any(is.infinite(x) | is.nan(x))), ]
     }
-    as.data.frame(preprocessCore::normalize.quantiles(RE, keep.names = TRUE))
+    RE %>%
+        as.matrix() %>%
+        preprocessCore::normalize.quantiles(keep.names = TRUE) %>%
+        as.data.frame()
 }
 ```
 
