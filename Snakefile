@@ -75,25 +75,11 @@ rule generate_dds:
         gtf_path=Path(os.environ["GENOMIC_DATA_DIR"]).joinpath("Ensembl/Human/Release_104/Raw/Homo_sapiens.GRCh38.104.gtf")
     output: 
         "proc/dds_wendy.rds",
-        "proc/dds_nuo.rds"
+        "proc/txi_wendy.rds",
+        "proc/dds_nuo.rds",
+        "proc/txi_nuo.rds",
     conda: "trap_seq"
     script: "scripts/01_generate_dds.R"
-
-rule RE_quant:
-    input: "proc/dds_{source}.rds"
-    output:
-        RE="results/RE_quant/{source}_RE.csv",
-        RE_normalized="results/RE_quant/{source}_RE_normalized.csv"
-    conda: "trap_seq"
-    script: "scripts/02_RE_quant.R"
-        
-rule rodriguez_results:
-    input: 
-        "results/RE_quant/{source}_RE_normalized.csv",
-        Path(os.environ["GENOMIC_DATA_DIR"]).joinpath("Ensembl/Human/Release_104/Raw/Homo_sapiens.GRCh38.104.gtf")
-    output: "results/RE_quant/{source}_rodriguez_results.csv"
-    conda: "trap_seq"
-    script: "scripts/03_rodriguez_results.R"
 
 rule get_interaction_results:
     input: "proc/dds_wendy.rds"
