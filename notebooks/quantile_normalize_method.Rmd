@@ -88,19 +88,48 @@ get_RE_normalized <- function(txi, min_row_sum, clean = FALSE) {
         preprocessCore::normalize.quantiles(keep.names = TRUE) %>%
         as.data.frame()
 }
+
+plot_windows_linux <- function(linux_df, windows_df) {
+    data.frame(
+        linux = rowMeans(select(linux_df, contains(c("4_7", "4_9", "95_3")))),
+        windows = rowMeans(select(windows_df, contains(c("4_7", "4_9", "95_3"))))) %>%
+            ggplot(aes(x = linux, y = windows)) +
+            geom_point() +
+            geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+            xlab("Linux") +
+            ylab("Windows")
+    ggsave(sprintf("results/figures/windows_linux_%s.png", min_row_sum))
+}
 ```
 
 ## Loading data
 ```{r}
 txi_nuo <- readRDS("proc/txi_nuo.rds")
 txi_wendy <- readRDS("proc/txi_wendy.rds")
+
+library(modelr)
+model_matrix(colData(dds_wendy), ~ assay + condition + assay:condition)
+model_matrix(colData(dds_wendy), ~ assay + condition)
 ```
 
 # Comparing results
 
 ```{r}
-RE <- get_RE(txi_wendy, 150, FALSE)
-RE_normalized <- get_RE_normalized(txi_wendy, 150, FALSE)
+RE <- get_RE(txi_wendy, 20, FALSE)
+RE <- get_RE_normalized(txi_wendy, 20, FALSE)
+linux_clean <- get_RE_normalized(txi_wendy, 0, TRUE)
+windows_clean <- read.table("proc/windows_RE/RE_normalized_0_clean.csv", row.names = 1, header = TRUE, sep = ",")
+colnames(windows_clean) <- gsub("X", "", colnames(windows_clean))
+min_row_sum <- 0
+plot_windows_linux(linux_clean, windows_clean)
+
+for (min_row_sum in c("150", "20","50")) {
+    linux_df <- get_RE_normalized(txi_wendy, as.integer(min_row_sum), FALSE)
+    windows_df <- read.table(sprintf("proc/windows_RE/RE_normalized_%s.csv", min_row_sum), row.names = 1, header = TRUE, sep = ",")
+    colnames(windows_df) <- gsub("X", "", colnames(windows_df))
+    plot_windows_linux(linux_df, windows_df)
+}
+
 ```
 
 # Visualizations
