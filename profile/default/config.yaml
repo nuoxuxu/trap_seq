@@ -1,6 +1,7 @@
 executor: slurm
 jobs: 100
 use-conda: true
+latency-wait: 60
 default-resources:
   mem_mb: None
   mem_mib: None

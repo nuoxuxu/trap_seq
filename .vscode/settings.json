@@ -1,0 +1,7 @@
+{
+    "files.exclude": {
+        ".snakemake/": true,
+        "data/": true,
+        "envs/": true
+    }
+}

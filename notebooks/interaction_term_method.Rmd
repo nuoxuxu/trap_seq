@@ -20,10 +20,6 @@ library(org.Hs.eg.db)
 ## Load data
 
 ```{r}
-dds_wendy <- readRDS("proc/dds_wendy.rds")
-```
-
-```{r}
 symbols <- mapIds(
     org.Hs.eg.db,
     keys = keys(org.Hs.eg.db, "ENSEMBL"),
@@ -42,14 +38,15 @@ gene_types <- mapIds(
 # Run DESeq2
 
 ```{r}
-design(dds_wendy) <- formula(~ assay + condition + assay:condition)
+dds_wendy <- readRDS("proc/dds_wendy.rds")
+design(dds_wendy) <- formula(~ condition + assay + condition:assay)
 dds_wendy <- DESeq(dds_wendy, test = "LRT", reduced = ~ assay + condition)
 res <- results(dds_wendy)
 ```
 
 ```{r}
 res_lfcShrink <- dds_wendy %>%
-    lfcShrink(coef="assayInput.conditionPTEN_KO", type="apeglm") %>%
+    lfcShrink(coef="conditionPTEN_KO.assayInput", type="apeglm") %>%
     as.data.frame() %>%
     mutate(symbol = symbols[rownames(res)]) %>% 
     mutate(gene_type = gene_types[rownames(res)])
@@ -59,11 +56,16 @@ res_lfcShrink <- dds_wendy %>%
 
 ```{r}
 res_lfcShrink %>%
-    filter(padj < 0.05) %>%
+    filter(padj < 0.1) %>%
     arrange(desc(abs(log2FoldChange))) %>%
-    View()
+    write.csv("test.csv")
 ```
 
 ```{r}
-plotCounts(dds_wendy, gene="ENSG00000011405", intgroup=c("assay", "condition"))
+gene_types["ENSG00000204789"]
+length(gene_types)
+```
+
+```{r}
+plotCounts(dds_wendy, gene="ENSG00000204789", intgroup=c("assay", "condition"))
 ```
