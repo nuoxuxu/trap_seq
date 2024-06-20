@@ -30,4 +30,7 @@ envs/
 
 # snakemake
 .snakemake/
-data/salmon_results/.DS_Store
+.DS_Store
+*.Rproj.user
+*.Rproj
+*.Rhistory
