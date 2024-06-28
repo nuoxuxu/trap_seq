@@ -22,7 +22,6 @@ results/
 .config/
 .local/
 tmp/
-rstudio-server.sh
 salmon/
 
 # conda environment
@@ -31,6 +30,8 @@ envs/
 # snakemake
 .snakemake/
 .DS_Store
-*.Rproj.user
+
+# RStudio
+.Rproj.user
+.Rhistory
 *.Rproj
-*.Rhistory
