@@ -23,6 +23,8 @@ library(clusterProfiler)
 library(ggVennDiagram)
 library(here)
 library(tximport)
+library(EnhancedVolcano)
+library(ggpubr)
 ```
 
 ## Load data and helper functions
@@ -71,7 +73,6 @@ Create column metadata for `DESeqDataSet`
 ```{r}
 samples <- factor(str_extract(names(files), "^.*?(?=_IP|_Input)"), levels = c("4_7", "4_9", "95_3", "87", "90", "91"))
 assay <- factor(str_extract(files, "IP|Input"), levels = c("Input", "IP"))
-# Note here that the last level of the condition factor is used as the numerator
 condition <- factor(ifelse(grepl("_", samples), "PTEN_KO", "WT"), levels = c("WT", "PTEN_KO"))
 coldata <- data.frame(samples = samples, assay = assay, condition = condition)
 ```
@@ -90,17 +91,85 @@ After we have created the `DESeqDataSet` object, we can subset this object to sa
 
 ```{r}
 IP_only <- dds[, colData(dds)$assay == "IP"]
+keep <- rowSums(counts(IP_only) >= 10) >= 5
+IP_only <- IP_only[keep,]
+design(IP_only) <- formula(~ condition)
 IP_only <- DESeq(IP_only)
-results(IP_only, contrast=c("condition", "WT", "PTEN_KO"))
+
+IP_res <- results(IP_only)
+IP_res$symbols <- unname(symbols[rownames(IP_res)])
 ```
 
 ## Input samples only
 
 ```{r}
 Input_only <- dds[, colData(dds)$assay == "Input"]
+keep <- rowSums(counts(Input_only) >= 10) >= 5
+Input_only <- Input_only[keep,]
 design(Input_only) <- formula(~ condition)
 Input_only <- DESeq(Input_only)
-results(IP_only, contrast=c("condition", "WT", "PTEN_KO"))
+
+Input_res <- results(Input_only)
+Input_res$symbols <- unname(symbols[rownames(Input_res)])
+```
+
+## WT_only
+
+```{r}
+WT_only <- dds[, colData(dds)$condition == "WT"]
+keep <- rowSums(counts(WT_only) >= 10) >= 5
+WT_only <- WT_only[keep,]
+design(WT_only) <- formula(~ assay)
+WT_only <- DESeq(WT_only)
+
+WT_res <- results(WT_only)
+WT_res$symbols <- unname(symbols[rownames(WT_res)])
+
+RE_WT <- WT_res %>% 
+  as.data.frame() %>%
+  mutate(RE = 2**log2FoldChange)
+write.csv(RE_WT, "results/RE_DESeq2/RE_WT.csv")
+```
+
+## PTEN_KO_only
+
+```{r}
+PTEN_KO_only <- dds[, colData(dds)$condition == "PTEN_KO"]
+keep <- rowSums(counts(PTEN_KO_only) >= 10) >= 5
+PTEN_KO_only <- PTEN_KO_only[keep,]
+design(PTEN_KO_only) <- formula(~ assay)
+PTEN_KO_only <- DESeq(PTEN_KO_only)
+
+PTEN_KO_res <- results(PTEN_KO_only)
+PTEN_KO_res$symbols <- unname(symbols[rownames(PTEN_KO_res)])
+RE_PTEN_KO <- PTEN_KO_res %>% 
+  as.data.frame() %>%
+  mutate(RE = 2**log2FoldChange)
+
+# RE_PTEN_KO <- RE_PTEN_KO %>% 
+#   mutate(X = rownames(RE_PTEN_KO)) 
+
+# nuo_RE_normalized <- read.csv("results/RE_quant/nuo_RE_normalized.csv")
+# rowMeans(nuo_RE_normalized[, c("X4_7", "X4_9", "X95_3")], na.rm = TRUE)
+# RE_PTEN_old <- data.frame(
+#   X = nuo_RE_normalized[, "X"],
+#   RE = rowMeans(nuo_RE_normalized[, c("X4_7", "X4_9", "X95_3")], na.rm = TRUE)
+# )
+
+# temp <- RE_PTEN_old %>% 
+#   left_join(RE_PTEN_KO, by = "X")
+
+# temp %>% head()
+
+# temp %>% 
+#   ggplot(aes(x = RE.x, y = RE.y)) +
+#     geom_point() +
+#     geom_abline(slope = 1, intercept = 0) +
+#     scale_x_continuous(limits = c(0, 5)) +
+#     scale_y_continuous(limits = c(0, 5)) +
+#     stat_cor()
+
+write.csv(RE_PTEN_KO, "results/RE_DESeq2/RE_PTEN_KO.csv")
 ```
 
 ## Interaction term
@@ -109,7 +178,8 @@ results(IP_only, contrast=c("condition", "WT", "PTEN_KO"))
 # Likelihood ratio test
 design(dds) <- formula(~ assay + condition + condition:assay)
 dds_interaction <- DESeq(dds, test = "LRT", reduced = ~ assay + condition)
-results(dds_interaction)
+interaction_res <- results(dds_interaction)
+interaction_res$symbols <- unname(symbols[rownames(interaction_res)])
 ```
 # Focusing on interaction term results
 
@@ -135,7 +205,7 @@ res_lfcShrink %>% write_csv(here("results/assayIP_conditionPTEN_KO.csv"))
 ## Individual gene counts
 You can visualize the distribution of individual genes using this function
 ```{r}
-plotCounts(dds_interaction, gene="ENSG00000204789", intgroup=c("assay", "condition"))
+plotCounts(dds_interaction, gene="ENSG00000139725", intgroup=c("assay", "condition"))
 ```
 
 ## Functional interpretation
@@ -213,3 +283,102 @@ SFARI_plotting %>%
 ```
 
 
+
+# Visualization
+
+## Volcano plots
+
+```{r}
+EnhancedVolcano(
+  IP_res,
+  lab = IP_res$symbols,
+  x = "log2FoldChange",
+  y = "padj",
+  title = "IP fraction"
+)
+
+EnhancedVolcano(
+  Input_res,
+  lab = Input_res$symbols,
+  x = "log2FoldChange",
+  y = "padj",
+  title = "Input fraction"
+)
+
+EnhancedVolcano(
+  interaction_res,
+  lab = interaction_res$symbols,
+  x = "log2FoldChange",
+  y = "padj",
+  title = "log2FoldChange in RE",
+  pCutoff = 0.05,
+  xlim = c(-10, 10),
+  ylim = c(0, 10)
+)
+```
+
+## Figure 1H
+
+### IP vs Input
+```{r}
+keep <- intersect(rownames(IP_res), rownames(Input_res))
+IP_res <- IP_res[keep, ]
+Input_res <- Input_res[keep, ]
+
+temp <- data.frame(
+  IP = IP_res$log2FoldChange,
+  Input = Input_res$log2FoldChange
+) %>% 
+  mutate(
+    IP = 2**IP,
+    Input = 2**Input
+  )
+
+temp %>% 
+  ggplot(aes(x = Input, y = IP)) +
+  geom_point() +
+  scale_x_continuous(limits = c(0, 5)) +
+  scale_y_continuous(limits = c(0, 5)) +
+  xlab("RE ")
+  stat_cor()
+```
+
+### WT vs PTEN_KO
+```{r}
+keep <- intersect(rownames(WT_res), rownames(PTEN_KO_res))
+WT_res <- WT_res[keep, ]
+PTEN_KO_res <- PTEN_KO_res[keep, ]
+interaction_res <- interaction_res[keep, ]
+
+temp <- data.frame(
+  WT = WT_res$log2FoldChange,
+  PTEN_KO = PTEN_KO_res$log2FoldChange
+) %>% 
+  mutate(
+    WT = 2**WT,
+    PTEN_KO = 2**PTEN_KO
+  )
+
+rownames(temp) <- rownames(interaction_res)
+
+temp <- temp %>% 
+  mutate(
+    significant = interaction_res$padj < 0.05,
+    symbols = interaction_res$symbols)
+
+temp$significant[is.na(temp$significant)] <- FALSE
+temp$symbols <- ifelse(temp$symbols %in% c("RHOF", "TSPAN4"), temp$symbols, "")
+
+temp %>%
+  ggplot(aes(x = WT, y = PTEN_KO, label = symbols)) +
+  geom_point(aes(colour = significant, alpha = significant)) +
+  geom_text_repel(max.overlaps = Inf) +
+  geom_abline(slope = 1, intercept = 0, color = "blue") +
+  scale_x_continuous(limits = c(0, 5)) +
+  scale_y_continuous(limits = c(0, 5)) +
+  scale_alpha_manual(values = c(0.2, 1)) +
+  scale_colour_manual(values = c("black", "red")) +
+  xlab("RE (WT)") +
+  ylab("RE (PTEN KO)") +
+  stat_cor()
+```

@@ -1,7 +1,7 @@
 {
     "files.exclude": {
         ".snakemake/": true,
-        "data/": true,
         "envs/": true
-    }
+    },
+    "r.plot.useHttpgd": true
 }
