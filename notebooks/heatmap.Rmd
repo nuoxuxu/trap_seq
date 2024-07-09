@@ -1,0 +1,194 @@
+# Preparation
+
+## Load Libraries
+
+```{r}
+library(readxl)
+library(tidyr)
+library(dplyr)
+library(EnsDb.Hsapiens.v79)
+library(pheatmap)
+```
+
+## Load Data
+
+```{r}
+txi <- readRDS("proc/txi_wendy.rds")
+tpm <- txi$abundance
+tpm <- log10(tpm + 1)
+tpm <- as_tibble(tpm, rownames = "gene_id")
+
+symbols <- mapIds(
+  EnsDb.Hsapiens.v79,
+  keys = keys(EnsDb.Hsapiens.v79, "SYMBOL"),
+  column = c("GENEID"),
+  keytype = "SYMBOL"
+)
+```
+
+## Define Functions
+
+```{r}
+save_pheatmap_png <- function(x, filename, width=1200, height=1000, res = 150) {
+  png(filename, width = width, height = height, res = res)
+  grid::grid.newpage()
+  grid::grid.draw(x$gtable)
+  dev.off()
+}
+```
+
+## Data Wrangling
+```{r}
+annotation <- read_excel("data/neuro genes update.xlsx", sheet = 3) %>% 
+    separate(Annotation, into = c("Annotation1", "Annotation2", "Annotation3"), sep = ", ", fill = "right") %>% 
+    dplyr::select(c("Gene", "Annotation1", "Annotation2", "Annotation3")) %>% 
+    mutate(Gene = toupper(Gene)) %>% 
+    mutate(gene_id = symbols[Gene])
+```
+
+# Plotting
+
+## Synaptic Markers
+
+```{r}
+synaptic_annotations <- annotation %>% 
+    dplyr::filter(Annotation1 == "Synaptic markers") %>% 
+    dplyr::select(-Annotation1) %>% 
+    mutate(Annotation2 = ifelse(is.na(Annotation2), "Synaptic markers", Annotation2)) %>% 
+    pivot_longer(cols = starts_with("Annotation"), names_to = "AnnotationType", values_to = "Annotation") %>% 
+    dplyr::select(-AnnotationType) %>%
+    dplyr::filter(!is.na(Annotation))
+
+synaptic_annotations$Annotation <-factor(
+    synaptic_annotations$Annotation, 
+    levels=c(
+        "Synaptic markers", "Glutamatergic", "NMDA Receptor", "AMPA Receptor", 
+        "Pre-Synaptic", "Presynaptic Pan", "Presynaptic Glu", "Presynaptic GABA", 
+        "Post-Synaptic", "Postsynaptic Glu", "Postsynaptic GABA"))
+
+synaptic_annotations <- synaptic_annotations %>% 
+    arrange(Annotation)
+
+mat <- synaptic_annotations %>% 
+    left_join(tpm, by = c("gene_id" = "gene_id")) %>%
+    dplyr::select(c("87_Input", "90_Input", "91_Input", "4_7_Input", "95_3_Input", "4_9_Input")) %>% 
+    as.matrix()
+
+annotation_row <- synaptic_annotations[, c("Gene", "Annotation")] %>% as.data.frame()
+colnames(annotation_row) <- c("Gene", "Annotation")
+rownames(mat) <- rownames(annotation_row)
+
+annotation_col <- data.frame(
+    row.names = c("87_Input", "90_Input", "91_Input", "4_7_Input", "95_3_Input", "4_9_Input"),
+    condition = c("WT", "WT", "WT", "PTEN KO", "PTEN KO", "PTEN KO")
+)
+
+p <- pheatmap(
+    mat,
+    cluster_rows = FALSE,
+    cluster_cols = FALSE,
+    gaps_row = cumsum(unname(table(annotation_row$Annotation))),
+    gaps_col = c(3, 3),
+    annotation_row = dplyr::select(annotation_row, -c(Gene)),
+    annotation_col = annotation_col,
+    labels_col = rep("", ncol(mat)),
+    labels_row = annotation_row$Gene,
+    main = "Synaptic Markers",
+)
+
+save_pheatmap_png(p, "results/figures/synaptic_markers.png", width=1200, height=1400, res = 150)
+```
+
+## Developmental Markers
+
+```{r}
+developmental <- annotation %>% 
+    dplyr::filter(Annotation1 != "Deep Cortical Neurons" & Annotation1 != "Superficial Cortical Neurons" & Annotation1 != "Synaptic markers") %>%
+    dplyr::select(-c(Annotation3)) %>% 
+    pivot_longer(c(Annotation1, Annotation2), names_to = "AnnotationType", values_to = "Annotation") %>% 
+    dplyr::select(-AnnotationType) %>% 
+    dplyr::filter(!is.na(Annotation)) %>% 
+    mutate(gene_id = symbols[Gene]) %>% 
+    left_join(tpm, by = c("gene_id" = "gene_id"))
+
+developmental$Annotation <- factor(
+    developmental$Annotation,
+    levels = c(
+        "Pluripotency", "Progenitors", "Pan Neuronal", "Immature Neuron", 
+        "Differentiated Neuron", "Dopaminergic", "layer 5"
+    ))
+
+developmental <- developmental %>% 
+    arrange(Annotation) %>% 
+    dplyr::filter(!is.na(gene_id))
+
+mat <- developmental %>% 
+    dplyr::select(-c(Gene, gene_id, Annotation)) %>% 
+    dplyr::select(c("87_Input", "90_Input", "91_Input", "4_7_Input", "95_3_Input", "4_9_Input")) %>% 
+    as.matrix()
+
+annotation_row <- developmental %>% dplyr::select(c(Annotation, Gene)) %>% as.data.frame()
+rownames(mat) <- rownames(annotation_row)
+annotation_col <- data.frame(
+    row.names = c("87_Input", "90_Input", "91_Input", "4_7_Input", "95_3_Input", "4_9_Input"),
+    condition = c("WT", "WT", "WT", "PTEN KO", "PTEN KO", "PTEN KO")
+)
+
+p <- pheatmap(
+    mat,
+    cluster_rows = FALSE,
+    cluster_cols = FALSE,
+    gaps_row = cumsum(unname(table(annotation_row$Annotation))),
+    gaps_col = c(3, 3),
+    annotation_row = dplyr::select(annotation_row, -c(Gene)),
+    annotation_col = annotation_col,
+    labels_row = annotation_row$Gene,
+    main = "Neuronal Developmental Markers",
+)
+
+save_pheatmap_png(p, "results/figures/developmental.png", width=1200, height=1400, res = 150)
+```
+
+```{r}
+CN <- annotation %>% 
+    dplyr::filter(Annotation1 %in% c("Deep Cortical Neurons", "Superficial Cortical Neurons")) %>% 
+    mutate(gene_id = symbols[Gene]) %>% 
+    left_join(tpm, by = c("gene_id" = "gene_id")) %>% 
+    dplyr::select(c("Gene", "Annotation1", "Annotation2", "gene_id", "87_Input", "90_Input", "91_Input", "4_7_Input", "95_3_Input", "4_9_Input"))
+
+CN$Annotation1 <- factor(CN$Annotation1, levels = c("Superficial Cortical Neurons", "Deep Cortical Neurons"))
+CN$Annotation2 <- factor(CN$Annotation2, levels = c("layer 1", "layer 2-3", "layer 2-4", "layer 5", "layer 6"))
+
+CN <- CN %>% 
+    arrange(Annotation1, Annotation2)
+
+mat <- CN %>%
+    dplyr::select(-c(Gene, gene_id, Annotation1, Annotation2)) %>%
+    as.matrix()
+
+annotation_row <- CN %>%
+    dplyr::select(c(Annotation1, Annotation2)) %>%
+    dplyr::rename(Neuron = Annotation1) %>%
+    dplyr::rename(Layer = Annotation2) %>% 
+    as.data.frame()
+
+rownames(mat) <- rownames(annotation_row)
+annotation_col <- data.frame(
+    row.names = c("87_Input", "90_Input", "91_Input", "4_7_Input", "95_3_Input", "4_9_Input"),
+    condition = c("WT", "WT", "WT", "PTEN KO", "PTEN KO", "PTEN KO")
+)
+
+g <- pheatmap(
+    mat,
+    cluster_rows = FALSE,
+    cluster_cols = FALSE,
+    gaps_row = cumsum(unname(table(annotation_row$Neuron))),
+    gaps_col = c(3, 3),
+    annotation_row = annotation_row,
+    annotation_col = annotation_col,
+    labels_row = CN$Gene,
+    main = "Cortical Neuron Markers"
+)
+
+save_pheatmap_png(g, "results/figures/cortical_neuron_markers.png", width=1200, height=1400, res = 150)
+```
