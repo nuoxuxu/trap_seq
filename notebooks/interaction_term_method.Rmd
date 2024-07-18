@@ -98,6 +98,8 @@ IP_only <- DESeq(IP_only)
 
 IP_res <- results(IP_only)
 IP_res$symbols <- unname(symbols[rownames(IP_res)])
+
+write.csv(IP_res, "results/IP_res.csv")
 ```
 
 ## Input samples only
