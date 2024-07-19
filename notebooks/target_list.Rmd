@@ -75,6 +75,7 @@ temp$num <- rowSums(temp[sapply(temp, is.logical)])
 
 temp %>% 
     arrange(desc(num)) %>% 
+    dplyr::select(symbols, num, everything()) %>% 
     write.csv("results/IP_target_list.csv")
 ```
 
@@ -93,5 +94,6 @@ temp$num <- rowSums(temp[sapply(temp, is.logical)])
 
 temp %>% 
     arrange(desc(num)) %>% 
+    dplyr::select(symbols, num, everything()) %>% 
     write.csv("results/Interaction_target_list.csv")
 ```
