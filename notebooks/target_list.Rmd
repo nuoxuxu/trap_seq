@@ -40,8 +40,17 @@ gs_name_list_all <- unique(msigdbr(species = "Homo sapiens", category = "C5")$gs
 gs_name_list_filtered <- gs_name_list_all[Reduce(`|`, lapply(keywords_list, function(x) {str_detect(gs_name_list_all, x)}))]
 gs_name_list_filtered <- c(gs_name_list_filtered, "KEGG_MTOR_SIGNALING_PATHWAY")
 
+msigdbr(species = "Homo sapiens", category = "C5") %>% 
+    dplyr::filter(gs_name %in% gs_name_list_filtered) %>% 
+    pull(gs_exact_source) %>% 
+    unique() %>% 
+    write.csv("garbage/gs_name_list_filtered.csv", row.names = FALSE, quote = FALSE)
+
+# Go to http://revigo.irb.hr/ to get a reduced list of GO terms
+gs_exact_source_reduced <- lapply(Sys.glob("garbage/Revigo*"), function(x) {read.csv(x, sep = "\t")[["TermID"]]}) %>% unlist()
+
 GO_df <- msigdbr(species = "Homo sapiens") %>% 
-    dplyr::filter(gs_name %in% gs_name_list_filtered)
+    dplyr::filter(gs_exact_source %in% gs_exact_source_reduced)
 GO_df$gs_name <- as.factor(GO_df$gs_name)
 GO_terms <- split(GO_df$ensembl_gene, GO_df$gs_name)
 
