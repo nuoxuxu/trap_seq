@@ -3,6 +3,7 @@ library(msigdbr)
 library(dplyr)
 library(EnsDb.Hsapiens.v79)
 library(stringr)
+library(ggvenn)
 ```
 
 ```{r}
@@ -26,7 +27,9 @@ SFARI_genes <- SFARI_genes[nzchar(SFARI_genes)]
 # Get mTOR pathway genes
 
 mtor <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "KEGG") %>% 
-    dplyr::filter(gs_name == "KEGG_MTOR_SIGNALING_PATHWAY")
+    dplyr::filter(gs_name == "KEGG_MTOR_SIGNALING_PATHWAY") %>% 
+    pull(ensembl_gene) %>% 
+    unique()
 
 # Get GO terms that contain these key words
 
@@ -35,6 +38,7 @@ keywords_list <- c(
     "EXCITATORY_POSTSYNAPTIC_POTENTIAL", "INHIBITORY_POSTSYNAPTIC_POTENTIAL",
     "SYNAPTIC_DEPRESSION", "SYNAPTIC_POTENTIATION", "SYNAPTIC_PLASTICITY",
     "SYNAPTIC_VESICLE", "SYNAPTIC_SIGNAL_TRANSDUCTION", "SYNAPTIC_TRANSMISSION")
+
 names(keywords_list) <- keywords_list
 gs_name_list_all <- unique(msigdbr(species = "Homo sapiens", category = "C5")$gs_name)
 gs_name_list_filtered <- gs_name_list_all[Reduce(`|`, lapply(keywords_list, function(x) {str_detect(gs_name_list_all, x)}))]
@@ -58,17 +62,18 @@ GO_terms <- split(GO_df$ensembl_gene, GO_df$gs_name)
 
 GO_terms$epilepsy <- epilepsy
 GO_terms$SFARI_genes <- SFARI_genes
+GO_terms$mtor <- mtor
 ```
 
 ## IP only target list
 ```{r}
-genes_of_interest <- read.csv("results/IP_res.csv") %>%
+genes_of_interest_IP <- read.csv("results/IP_res.csv") %>%
     dplyr::filter(padj < 0.05) %>% 
     pull(X)  
 
-temp <- lapply(GO_terms, function(x) {genes_of_interest %in% x}) %>% data.frame()
+temp <- lapply(GO_terms, function(x) {genes_of_interest_IP %in% x}) %>% data.frame()
 
-row.names(temp) <- genes_of_interest
+row.names(temp) <- genes_of_interest_IP
 temp$symbols <- symbols[row.names(temp)]
 
 temp$num <- rowSums(temp[sapply(temp, is.logical)])
@@ -81,13 +86,13 @@ temp %>%
 
 ## RE target list
 ```{r}
-genes_of_interest <- read.csv("results/interaction/raw_interaction_results.csv") %>%
-    dplyr::filter(pvalue < 0.05) %>% 
+genes_of_interest_RE <- read.csv("results/interaction/raw_interaction_results.csv") %>%
+    dplyr::filter(padj < 0.05) %>% 
     pull(X)
 
-temp <- lapply(GO_terms, function(x) {genes_of_interest %in% x}) %>% data.frame()
+temp <- lapply(GO_terms, function(x) {genes_of_interest_RE %in% x}) %>% data.frame()
 
-row.names(temp) <- genes_of_interest
+row.names(temp) <- genes_of_interest_RE
 temp$symbols <- symbols[row.names(temp)]
 
 temp$num <- rowSums(temp[sapply(temp, is.logical)])
@@ -96,4 +101,11 @@ temp %>%
     arrange(desc(num)) %>% 
     dplyr::select(symbols, num, everything()) %>% 
     write.csv("results/Interaction_target_list.csv")
+```
+
+```{r}
+ggvenn(list(
+    IP = genes_of_interest_IP,
+    RE = genes_of_interest_RE
+))
 ```
