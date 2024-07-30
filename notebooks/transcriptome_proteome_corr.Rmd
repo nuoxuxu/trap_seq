@@ -104,8 +104,3 @@ df %>%
     stat_cor()
 ggsave("figures/d21_RE_d30_proteome.png")
 ```
-
-
-
-
-

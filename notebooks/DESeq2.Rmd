@@ -92,7 +92,7 @@ After we have created the `DESeqDataSet` object, we can subset this object to sa
 ```{r}
 IP_only <- dds[, colData(dds)$assay == "IP"]
 keep <- rowSums(counts(IP_only) >= 10) >= 5
-IP_only <- IP_only[keep,]
+IP_only <- IP_only[keep, ]
 design(IP_only) <- formula(~ condition)
 IP_only <- DESeq(IP_only)
 
@@ -113,6 +113,8 @@ Input_only <- DESeq(Input_only)
 
 Input_res <- results(Input_only)
 Input_res$symbols <- unname(symbols[rownames(Input_res)])
+
+write.csv(Input_res, "results/Input_res.csv")
 ```
 
 ## WT_only
