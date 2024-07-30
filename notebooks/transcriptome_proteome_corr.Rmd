@@ -28,123 +28,81 @@ mapping <- getBM(attributes = attributes, mart = ensembl)
 
 ## Loading data
 ```{r}
-RA <- read.csv("data/Live_pq_3619_TMTMosaic.csv")
 dds <- readRDS("proc/dds_wendy.rds")
 txi <- readRDS("proc/txi_wendy.rds")
-```
 
-```{r}
-transcriptome_TPM <- txi$abundance %>%
-    as.data.frame() %>%
-    dplyr::select(c("87_Input", "91_Input", "90_Input")) %>%
-    rowMeans()
+d21_transcriptome_TPM <- txi$abundance %>% as.data.frame() %>% dplyr::select(c("87_Input", "91_Input", "90_Input")) %>% rowMeans()
+d21_translatome_TPM <- txi$abundance %>% as.data.frame() %>% dplyr::select(c("87_IP", "90_IP", "91_IP")) %>% rowMeans()
+d21_transcriptome_DESeq <- dds[, (colData(dds)$assay == "Input") & (colData(dds)$condition == "WT")] %>% counts(normalized = TRUE) %>% rowMeans()
+d21_translatome_DESeq <- dds[, (colData(dds)$assay == "IP") & (colData(dds)$condition == "WT")] %>% counts(normalized = TRUE) %>% rowMeans()
 
-translatome_TPM <- txi$abundance %>%
-    as.data.frame() %>%
-    dplyr::select(c("87_IP", "90_IP", "91_IP")) %>%
-    rowMeans()
-```
+d30_transcriptome_TPM <- read.csv("data/salmon_scaledTPM_full.csv", row.names = 1) %>% 
+    dplyr::select(c("gene_id", "CN_1_2", "CN_1_3", "CN_2_1", "CN_2_2", "CN_3_1", "CN_3_2"))
+rownames(d30_transcriptome_TPM) <- d30_transcriptome_TPM$gene_id
+d30_transcriptome_TPM <- d30_transcriptome_TPM[, -c(1)] %>% rowMeans()
 
-## Data wrangling
-```{r}
-IP_res <- IP_res %>% 
-    as.data.frame()
-IP_res <- IP_res %>%
-    mutate(ensembl_gene_id = rownames(.))
-
-IP_only <- dds[, colData(dds)$assay == "IP"]
-translatome <- counts(IP_only, normalized = TRUE)
-translatome <- translatome[, colData(IP_only)$condition == "WT"] %>%
-    rowMeans() %>% 
-    data.frame(translatome = .) %>% 
-    mutate(ensembl_gene_id = rownames(.))
-
-Input_only <- dds[, colData(dds)$assay == "Input"]
-transcriptome <- counts(Input_only, normalized = TRUE)
-transcriptome <- transcriptome[, colData(Input_only)$condition == "WT"] %>%
-    rowMeans() %>% 
-    data.frame(transcriptome = .) %>% 
-    mutate(ensembl_gene_id = rownames(.))
-
-test <- data.frame(
-ensembl_gene_id = rownames(translatome), 
-x = translatome$translatome/transcriptome$transcriptome
-)
-
-
-
-mean_t30 <- RA %>% 
-    mutate(mean_t30 = rowMeans(dplyr::select(., contains("t30")))) %>% 
-    dplyr::select(c("UniprotID", "mean_t30")) %>% 
+RA <- read.csv("data/Live_pq_3619_TMTMosaic.csv") %>% 
     left_join(mapping, by = c("UniprotID" = "uniprotswissprot")) %>% 
-    left_join(translatome, by = c("ensembl_gene_id")) %>%
-    left_join(transcriptome, by = c("ensembl_gene_id")) %>% 
-    left_join(test, by = c("ensembl_gene_id")) %>%
-    left_join(as_tibble(IP_res, rownames = "ensembl_gene_id")[, c("ensembl_gene_id", "log2FoldChange")], by = c("ensembl_gene_id")) %>% 
-    rename(IP_FC = log2FoldChange) %>%
-    left_join(as_tibble(Input_res, rownames = "ensembl_gene_id")[, c("ensembl_gene_id", "log2FoldChange")], by = c("ensembl_gene_id")) %>%
-    rename(Input_FC = log2FoldChange) %>%
-    mutate(translatome_TPM = translatome_TPM[match(ensembl_gene_id, names(translatome_TPM))]) %>% 
-    mutate(transcriptome_TPM = transcriptome_TPM[match(ensembl_gene_id, names(transcriptome_TPM))])
+    dplyr::filter(!is.na(ensembl_gene_id))
+RA <- RA[!duplicated(RA$ensembl_gene_id), ]
+row.names(RA) <- RA$ensembl_gene_id
+RA <- RA[, c("R5_t30", "R6_t30", "R7_t30", "R8_t30")] %>% rowMeans()
+
+DESeq2_RE <- read.csv("results/interaction/shrink_interaction_results.csv")
+DESeq2_RE <- setNames(DESeq2_RE$log2FoldChange, DESeq2_RE$X)
+
+keep_genes <- intersect(intersect(intersect(names(d21_transcriptome_TPM), names(d30_transcriptome_TPM)), names(RA)), names(DESeq2_RE))
+
+d30_transcriptome_TPM <- d30_transcriptome_TPM[keep_genes]
+d21_transcriptome_TPM <- d21_transcriptome_TPM[keep_genes]
+d21_translatome_TPM <- d21_translatome_TPM[keep_genes]
+RA <- RA[keep_genes]
+DESeq2_RE <- DESeq2_RE[keep_genes]
+
+df <- data.frame(d21_transcriptome_TPM, d21_translatome_TPM, d30_transcriptome_TPM, RA, DESeq2_RE)
 ```
 
 # Plotting
 ```{r}
-# proteome vs transcriptome
-mean_t30 %>% 
-    ggplot(aes(x = log10(translatome_TPM+1), y = log10(mean_t30+1))) + 
-    geom_point(alpha = 0.2) + 
-    geom_smooth(method = 'lm', se = FALSE) + 
-    xlab("log10 (TPM + 1) for transcriptome") +
-    ylab("log10 (RA + 1) for protein expression") +
+df %>% 
+    ggplot(aes(x = log10(d30_transcriptome_TPM+1), y = log10(d21_transcriptome_TPM+1))) +
+    geom_point(alpha = 0.2) +
+    geom_smooth(method = "lm", se = FALSE) +
+    xlab("log10 (TPM + 1) for d30 transcriptome") +
+    ylab("log10 (TPM + 1) for d21 transcriptome") +
+    ggtitle("log10 (TPM + 1) for d30 transcriptome vs d21 transcriptome") +
     stat_cor()
+ggsave("figures/d30_transcriptome_d21_transcriptome.png")    
 
-mean_t30 %>% 
-    ggplot(aes(x = log10(x), y = log10(mean_t30+1))) + 
-    geom_point(alpha = 0.2) + 
-    geom_smooth(method = 'lm', se = FALSE) + 
-    xlab("log10 (TPM + 1) for transcriptome") +
-    ylab("log10 (RA + 1) for protein expression") +
-    stat_cor()    
-
-# proteome vs translatome
-mean_t30 %>% 
-    ggplot(aes(x = log10(transcriptome_TPM+1), y = log10(mean_t30+1))) + 
-    geom_point(alpha = 0.2) + 
-    geom_smooth(method = 'lm', se = FALSE) + 
-    xlab("log10 (TPM + 1) for translatome") +
-    ylab("log10 (RA + 1) for protein expression") +
+df %>% 
+    ggplot(aes(x = log10(d21_translatome_TPM), y = log10(RA+1))) +
+    geom_point(alpha = 0.2) +
+    geom_smooth(method = "lm", se = FALSE) +
+    xlab("log10 (TPM + 1) for d21 translatome") +
+    ylab("log10 (TPM + 1) for d30 protein expression") +
+    ggtitle("log10 (TPM + 1) for d21 translatome vs d30 protein expression") +
     stat_cor()
+ggsave("figures/d21_translatome_d30_proteome.png")    
 
-# proteome vs IP_FC
-mean_t30 %>% 
-    ggplot(aes(x = IP_FC, y = log10(mean_t30+1))) + 
-    geom_point(alpha = 0.2) + 
-    geom_smooth(method = 'lm', se = FALSE) + 
-    xlab("log2FoldChange in IP") +
-    ylab("log10 (RA + 1) for protein expression") +
-    stat_cor()    
-
-# proteome vs Input_FC
-mean_t30 %>% 
-    ggplot(aes(x = Input_FC, y = log10(mean_t30+1))) + 
-    geom_point(alpha = 0.2) + 
-    geom_smooth(method = 'lm', se = FALSE) + 
-    xlab("log2FoldChange in Input") +
-    ylab("log10 (RA + 1) for protein expression") +
-    stat_cor()       
-
-DESeq2_RE <- read.csv("results/interaction/shrink_interaction_results.csv")
-
-mean_t30 %>% 
-    left_join(DESeq2_RE, join_by(ensembl_gene_id == X)) %>% 
-    ggplot(aes(x = log2FoldChange, y = log2(mean_t30+1))) + 
-    geom_point(alpha = 0.2) + 
-    geom_smooth(method = 'lm', se = FALSE) + 
-    scale_x_continuous(limits = c(-1, 1)) +
-    xlab("log2 RE between PTEN_KO and WT") +
-    ylab("log10 (RA + 1) for protein expression") +
+df %>%
+    ggplot(aes(x = log10(d21_transcriptome_TPM), y = log10(RA+1))) +
+    geom_point(alpha = 0.2) +
+    geom_smooth(method = "lm", se = FALSE) +
+    xlab("log10 (TPM + 1) for d21 transcriptome") +
+    ylab("log10 (TPM + 1) for d30 protein expression") +
+    ggtitle("log10 (TPM + 1) for d21 transcriptome vs d30 protein expression") +
     stat_cor()
+ggsave("figures/d21_transcriptome_d30_proteome.png")
+
+df %>%
+    ggplot(aes(x = DESeq2_RE, y = log10(RA+1))) +
+    geom_point(alpha = 0.2) +
+    geom_smooth(method = "lm", se = FALSE) +
+    xlab("log2FoldChange for DESeq2 interaction") +
+    ylab("log10 (TPM + 1) for d30 protein expression") +
+    ggtitle("log2FoldChange for DESeq2 interaction vs d30 protein expression") +
+    stat_cor()
+ggsave("figures/d21_RE_d30_proteome.png")
 ```
 
 
