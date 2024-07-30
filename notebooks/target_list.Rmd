@@ -1,8 +1,9 @@
 ```{r}
 library(msigdbr)
-library(dplyr)
+library(tidyverse)
 library(EnsDb.Hsapiens.v79)
 library(stringr)
+library(readxl)
 library(ggvenn)
 ```
 
@@ -13,26 +14,33 @@ symbols <- mapIds(
   column = c("SYMBOL"),
   keytype = "GENEID"
 )
+symbols_to_ensembl <- setNames(names(symbols), symbols)
 ```
 
+Get disease pathway genes
 ```{r}
-# Get disease pathway genes
+epilepsy1 <- read.csv("data/annotation/Early onset or syndromic epilepsy-1.tsv", sep = "\t")[["EnsemblId.GRch38."]]
+epilepsy1 <- epilepsy1[nzchar(epilepsy1)]
 
-epilepsy <- read.csv("data/annotation/Early onset or syndromic epilepsy-1.tsv", sep = "\t")[["EnsemblId.GRch38."]]
-epilepsy <- epilepsy[nzchar(epilepsy)]
+epilepsy2 <- read_excel("data/annotation/epilepsy genes.xlsx", sheet = 2, col_names = FALSE)
+epilepsy2 <- epilepsy2["...1"] %>% unique() %>% unlist() %>% unname()
+
+epilepsy2 <- symbols_to_ensembl[epilepsy2] %>% unname()
 
 SFARI_genes <- read.csv("data/annotation/SFARI-Gene_genes_03-28-2024release_05-28-2024export.csv")[["ensembl.id"]]
 SFARI_genes <- SFARI_genes[nzchar(SFARI_genes)]
+```
 
-# Get mTOR pathway genes
-
+Get mTOR pathway genes
+```{r}
 mtor <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "KEGG") %>% 
     dplyr::filter(gs_name == "KEGG_MTOR_SIGNALING_PATHWAY") %>% 
     pull(ensembl_gene) %>% 
     unique()
+```
 
-# Get GO terms that contain these key words
-
+Get GO terms that contain these key words
+```{r}
 keywords_list <- c(
     "ACTION_POTENTIAL", "CATION_CHANNEL", "ION_CHANNEL", 
     "EXCITATORY_POSTSYNAPTIC_POTENTIAL", "INHIBITORY_POSTSYNAPTIC_POTENTIAL",
@@ -49,58 +57,94 @@ msigdbr(species = "Homo sapiens", category = "C5") %>%
     pull(gs_exact_source) %>% 
     unique() %>% 
     write.csv("garbage/gs_name_list_filtered.csv", row.names = FALSE, quote = FALSE)
+```
 
+Octavia's GO terms
+```{r}
+gs_name_list_all <- msigdbr(species = "Homo sapiens", category = "C5")
+gs_name_list <- pull(read_excel("data/annotation/GOBP_enrichmentterms.xlsx", col_names = FALSE), `...1`)
+gs_name_list <- str_replace_all(gs_name_list, "\r\n", "")
+
+# gs_name_list[is.na(match(gs_name_list, gs_name_list_all$gs_name))]
+
+write.csv(gs_name_list_all[match(gs_name_list, gs_name_list_all$gs_name), "gs_exact_source"], "data/annotation/octavia_GO_terms.csv", row.names = FALSE, quote = FALSE)
+```
+
+Reduce redundancies in GO terms containing keywords
+```{r}
 # Go to http://revigo.irb.hr/ to get a reduced list of GO terms
 gs_exact_source_reduced <- lapply(Sys.glob("garbage/Revigo*"), function(x) {read.csv(x, sep = "\t")[["TermID"]]}) %>% unlist()
 
 GO_df <- msigdbr(species = "Homo sapiens") %>% 
     dplyr::filter(gs_exact_source %in% gs_exact_source_reduced)
 GO_df$gs_name <- as.factor(GO_df$gs_name)
-GO_terms <- split(GO_df$ensembl_gene, GO_df$gs_name)
-
-# Combine all gene sets
-
-GO_terms$epilepsy <- epilepsy
-GO_terms$SFARI_genes <- SFARI_genes
-GO_terms$mtor <- mtor
+gene_sets <- split(GO_df$ensembl_gene, GO_df$gs_name)
 ```
 
-## IP only target list
+Reduce redundancies in GO terms provided by Octavia
 ```{r}
-genes_of_interest_IP <- read.csv("results/IP_res.csv") %>%
+gs_exact_source_reduced <- read.csv("data/annotation/Revigo_BP_Octavia.tsv", sep = "\t")[["TermID"]]
+
+GO_df <- msigdbr(species = "Homo sapiens") %>% 
+    dplyr::filter(gs_exact_source %in% gs_exact_source_reduced)
+GO_df$gs_name <- as.factor(GO_df$gs_name)
+gene_sets <- split(GO_df$ensembl_gene, GO_df$gs_name)
+```
+
+Combine all gene sets
+```{r}
+# gene_sets$epilepsy1 <- epilepsy1
+gene_sets$epilepsy2 <- epilepsy2
+gene_sets$SFARI_genes <- SFARI_genes
+# gene_sets$mtor <- mtor
+```
+
+IP only target list
+```{r}
+IP_res <- read.csv("results/IP_res.csv")
+genes_of_interest_IP <- IP_res %>%
     dplyr::filter(padj < 0.05) %>% 
     pull(X)  
 
-temp <- lapply(GO_terms, function(x) {genes_of_interest_IP %in% x}) %>% data.frame()
+temp <- lapply(gene_sets, function(x) {genes_of_interest_IP %in% x}) %>% data.frame()
 
 row.names(temp) <- genes_of_interest_IP
+temp <- temp %>%
+    mutate(across(-c(epilepsy2, SFARI_genes), ~ifelse(. == TRUE, (1 / length(gs_exact_source_reduced)), .))) %>% 
+    mutate(across(c(epilepsy2, SFARI_genes), ~ifelse(. == TRUE, 1, 0)))
+temp$num <- rowSums(temp[sapply(temp, is.numeric)])
+
 temp$symbols <- symbols[row.names(temp)]
 
-temp$num <- rowSums(temp[sapply(temp, is.logical)])
-
 temp %>% 
-    arrange(desc(num)) %>% 
     dplyr::select(symbols, num, everything()) %>% 
-    write.csv("results/IP_target_list.csv")
+    left_join(IP_res[c("log2FoldChange", "symbols")], join_by("symbols")) %>%
+    arrange(desc(num), desc(log2FoldChange)) %>% 
+    View()
+    # write.csv("results/IP_target_list.csv")
 ```
 
-## RE target list
+RE target list
 ```{r}
 genes_of_interest_RE <- read.csv("results/interaction/raw_interaction_results.csv") %>%
     dplyr::filter(padj < 0.05) %>% 
     pull(X)
 
-temp <- lapply(GO_terms, function(x) {genes_of_interest_RE %in% x}) %>% data.frame()
+temp <- lapply(gene_sets, function(x) {genes_of_interest_RE %in% x}) %>% data.frame()
 
 row.names(temp) <- genes_of_interest_RE
+temp <- temp %>%
+    mutate(across(-c(epilepsy2, SFARI_genes), ~ifelse(. == TRUE, (1 / length(gs_exact_source_reduced)), .))) %>% 
+    mutate(across(c(epilepsy2, SFARI_genes), ~ifelse(. == TRUE, 1, 0)))
+temp$num <- rowSums(temp[sapply(temp, is.numeric)])
+
 temp$symbols <- symbols[row.names(temp)]
 
-temp$num <- rowSums(temp[sapply(temp, is.logical)])
-
 temp %>% 
-    arrange(desc(num)) %>% 
     dplyr::select(symbols, num, everything()) %>% 
-    write.csv("results/Interaction_target_list.csv")
+    left_join(IP_res[c("log2FoldChange", "symbols")], join_by("symbols")) %>%
+    arrange(desc(num), desc(log2FoldChange)) %>% 
+    View()
 ```
 
 ```{r}
