@@ -96,7 +96,7 @@ IP_only <- IP_only[keep, ]
 design(IP_only) <- formula(~ condition)
 IP_only <- DESeq(IP_only)
 
-IP_res <- results(IP_only)
+IP_res <- results(IP_only, contrast = c("condition", "PTEN_KO", "WT"))
 IP_res$symbols <- unname(symbols[rownames(IP_res)])
 
 write.csv(IP_res, "results/IP_res.csv")
@@ -111,7 +111,7 @@ Input_only <- Input_only[keep,]
 design(Input_only) <- formula(~ condition)
 Input_only <- DESeq(Input_only)
 
-Input_res <- results(Input_only)
+Input_res <- results(Input_only, contrast = c("condition", "PTEN_KO", "WT"))
 Input_res$symbols <- unname(symbols[rownames(Input_res)])
 
 write.csv(Input_res, "results/Input_res.csv")
