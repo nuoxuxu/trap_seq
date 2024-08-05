@@ -18,12 +18,13 @@ symbols_to_ensembl <- setNames(names(symbols), symbols)
 ```
 
 Get disease pathway genes
+
 ```{r}
 epilepsy1 <- read.csv("data/annotation/Early onset or syndromic epilepsy-1.tsv", sep = "\t")[["EnsemblId.GRch38."]]
 epilepsy1 <- epilepsy1[nzchar(epilepsy1)]
 
-epilepsy2 <- read_excel("data/annotation/epilepsy genes.xlsx", sheet = 2, col_names = FALSE)
-epilepsy2 <- epilepsy2["...1"] %>% unique() %>% unlist() %>% unname()
+epilepsy2 <- read_excel("data/epilepsy_genes_mao.xlsx", sheet = 1)
+epilepsy2 <- epilepsy2["Gene"] %>% unique() %>% unlist() %>% unname()
 
 epilepsy2 <- symbols_to_ensembl[epilepsy2] %>% unname()
 
@@ -31,35 +32,8 @@ SFARI_genes <- read.csv("data/annotation/SFARI-Gene_genes_03-28-2024release_05-2
 SFARI_genes <- SFARI_genes[nzchar(SFARI_genes)]
 ```
 
-Get mTOR pathway genes
-```{r}
-mtor <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "KEGG") %>% 
-    dplyr::filter(gs_name == "KEGG_MTOR_SIGNALING_PATHWAY") %>% 
-    pull(ensembl_gene) %>% 
-    unique()
-```
-
-Get GO terms that contain these key words
-```{r}
-keywords_list <- c(
-    "ACTION_POTENTIAL", "CATION_CHANNEL", "ION_CHANNEL", 
-    "EXCITATORY_POSTSYNAPTIC_POTENTIAL", "INHIBITORY_POSTSYNAPTIC_POTENTIAL",
-    "SYNAPTIC_DEPRESSION", "SYNAPTIC_POTENTIATION", "SYNAPTIC_PLASTICITY",
-    "SYNAPTIC_VESICLE", "SYNAPTIC_SIGNAL_TRANSDUCTION", "SYNAPTIC_TRANSMISSION")
-
-names(keywords_list) <- keywords_list
-gs_name_list_all <- unique(msigdbr(species = "Homo sapiens", category = "C5")$gs_name)
-gs_name_list_filtered <- gs_name_list_all[Reduce(`|`, lapply(keywords_list, function(x) {str_detect(gs_name_list_all, x)}))]
-gs_name_list_filtered <- c(gs_name_list_filtered, "KEGG_MTOR_SIGNALING_PATHWAY")
-
-msigdbr(species = "Homo sapiens", category = "C5") %>% 
-    dplyr::filter(gs_name %in% gs_name_list_filtered) %>% 
-    pull(gs_exact_source) %>% 
-    unique() %>% 
-    write.csv("garbage/gs_name_list_filtered.csv", row.names = FALSE, quote = FALSE)
-```
-
 Octavia's GO terms
+
 ```{r}
 gs_name_list_all <- msigdbr(species = "Homo sapiens", category = "C5")
 gs_name_list <- pull(read_excel("data/annotation/GOBP_enrichmentterms.xlsx", col_names = FALSE), `...1`)
@@ -70,18 +44,8 @@ gs_name_list <- str_replace_all(gs_name_list, "\r\n", "")
 write.csv(gs_name_list_all[match(gs_name_list, gs_name_list_all$gs_name), "gs_exact_source"], "data/annotation/octavia_GO_terms.csv", row.names = FALSE, quote = FALSE)
 ```
 
-Reduce redundancies in GO terms containing keywords
-```{r}
-# Go to http://revigo.irb.hr/ to get a reduced list of GO terms
-gs_exact_source_reduced <- lapply(Sys.glob("garbage/Revigo*"), function(x) {read.csv(x, sep = "\t")[["TermID"]]}) %>% unlist()
-
-GO_df <- msigdbr(species = "Homo sapiens") %>% 
-    dplyr::filter(gs_exact_source %in% gs_exact_source_reduced)
-GO_df$gs_name <- as.factor(GO_df$gs_name)
-gene_sets <- split(GO_df$ensembl_gene, GO_df$gs_name)
-```
-
 Reduce redundancies in GO terms provided by Octavia
+
 ```{r}
 gs_exact_source_reduced <- read.csv("data/annotation/Revigo_BP_Octavia.tsv", sep = "\t")[["TermID"]]
 
@@ -92,14 +56,20 @@ gene_sets <- split(GO_df$ensembl_gene, GO_df$gs_name)
 ```
 
 Combine all gene sets
+
 ```{r}
-# gene_sets$epilepsy1 <- epilepsy1
+#TODO sheet Include only SFARI category 1 and category 2
+#TODO One sheet include all SFARI genes
+#TODO combine two epilepsy gene lists
+
+gene_sets$epilepsy1 <- epilepsy1
 gene_sets$epilepsy2 <- epilepsy2
 gene_sets$SFARI_genes <- SFARI_genes
 # gene_sets$mtor <- mtor
 ```
 
 IP only target list
+
 ```{r}
 IP_res <- read.csv("results/IP_res.csv")
 genes_of_interest_IP <- IP_res %>%
@@ -116,6 +86,7 @@ temp$num <- rowSums(temp[sapply(temp, is.numeric)])
 
 temp$symbols <- symbols[row.names(temp)]
 
+#TODO absolute log2foldchange
 temp %>% 
     dplyr::select(symbols, num, everything()) %>% 
     left_join(IP_res[c("log2FoldChange", "symbols")], join_by("symbols")) %>%
@@ -125,6 +96,7 @@ temp %>%
 ```
 
 RE target list
+
 ```{r}
 genes_of_interest_RE <- read.csv("results/interaction/raw_interaction_results.csv") %>%
     dplyr::filter(padj < 0.05) %>% 
