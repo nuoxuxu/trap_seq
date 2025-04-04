@@ -1,0 +1,27 @@
+```{r}
+library(tidyverse)
+library(ggplot2)
+```
+
+```{r}
+#TODO normalize by EGFP expression before comparing
+RE_PTEN_KO <- read.csv("results/RE_DESeq2/RE_PTEN_KO.csv") %>% 
+    mutate(type = "RE_PTEN_KO")
+RE_WT <- read.csv("results/RE_DESeq2/RE_WT.csv") %>% 
+    mutate(type = "RE_WT")
+
+RE_PTEN_KO$RE_GFP <- RE_PTEN_KO$log2FoldChange / (RE_PTEN_KO %>% filter(X == "EGFP") %>% .[, "log2FoldChange"])
+RE_WT$RE_GFP <- RE_WT$log2FoldChange / (RE_WT %>% filter(X == "EGFP") %>% .[, "log2FoldChange"])
+```
+
+```{r}
+rbind(RE_PTEN_KO, RE_WT) %>% 
+    ggplot() +
+        geom_histogram(aes(x = RE_GFP), bins = 30) +
+        facet_wrap(~type)
+ggsave("figures/RE_EGFP.png")
+```
+
+```{r}
+ks.test(RE_PTEN_KO$RE_GFP, RE_WT$RE_GFP)
+```
