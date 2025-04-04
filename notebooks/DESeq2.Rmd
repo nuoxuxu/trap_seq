@@ -52,7 +52,7 @@ source(here("src", "helper_functions.R"))
 
 Get mappings from gene id to transcript id, this step takes a while
 ```{r}
-txdb <- makeTxDbFromGFF(here("data/Homo_sapiens.GRCh38.104.gtf"))
+txdb <- makeTxDbFromGFF(paste0(Sys.getenv("GENOMIC_DATA_DIR"), "GENCODE/Homo_sapiens.GRCh38.104.gtf"))
 k <- keys(txdb, keytype = "TXNAME")
 tx2gene <- AnnotationDbi::select(txdb, k, "GENEID", "TXNAME")
 tx2gene <- bind_rows(tx2gene, data.frame(TXNAME = c("EGFP"), GENEID = c("EGFP")))
@@ -69,6 +69,14 @@ Create txi object
 txi <- tximport(files, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRUE)
 ```
 
+Export TPM
+
+```{r}
+txi$abundance %>% 
+  as_tibble(rownames = "ENSEMBL") %>% 
+  write_csv(here("results/tpm.csv"))
+```
+
 Create column metadata for `DESeqDataSet`
 ```{r}
 samples <- factor(str_extract(names(files), "^.*?(?=_IP|_Input)"), levels = c("4_7", "4_9", "95_3", "87", "90", "91"))
@@ -83,6 +91,9 @@ dds <- DESeqDataSetFromTximport(txi, coldata, design = ~ condition)
 dds <- DESeq2::estimateSizeFactors(dds)
 ```
 
+```{r}
+counts(dds, normalize=T)["ENSG00000000003", ]
+```
 # Run DESeq2
 
 After we have created the `DESeqDataSet` object, we can subset this object to samples from the IP fraction only and from the Input fraction only, and then run DESeq on these subsets respectively.
@@ -91,8 +102,6 @@ After we have created the `DESeqDataSet` object, we can subset this object to sa
 
 ```{r}
 IP_only <- dds[, colData(dds)$assay == "IP"]
-keep <- rowSums(counts(IP_only) >= 10) >= 5
-IP_only <- IP_only[keep, ]
 design(IP_only) <- formula(~ condition)
 IP_only <- DESeq(IP_only)
 
@@ -293,12 +302,21 @@ SFARI_plotting %>%
 ## Volcano plots
 
 ```{r}
+IP_res <- read.csv("results/IP_res.csv")
+Input_res <- read.csv("results/Input_res.csv")
+interaction_res <- read.csv("results/assayIP_conditionPTEN_KO.csv")
+
+IP_res$volcano_label <- ifelse(IP_res$symbols == "KCNA1", "KCNA1", NA)
 EnhancedVolcano(
   IP_res,
-  lab = IP_res$symbols,
+  lab = IP_res$volcano_label,
   x = "log2FoldChange",
   y = "padj",
-  title = "IP fraction"
+  title = "IP fraction",
+  pCutoff = 0.05,
+  xlim = c(-10, 10),
+  ylim = c(0, 40),
+  drawConnectors = TRUE,widthConnectors = 0.75
 )
 
 EnhancedVolcano(
@@ -309,9 +327,11 @@ EnhancedVolcano(
   title = "Input fraction"
 )
 
+interaction_res$volcano_label <- ifelse(interaction_res$symbol == "RHOF", "RHOF", NA)
+
 EnhancedVolcano(
   interaction_res,
-  lab = interaction_res$symbols,
+  lab = interaction_res$volcano_label,
   x = "log2FoldChange",
   y = "padj",
   title = "log2FoldChange in RE",
