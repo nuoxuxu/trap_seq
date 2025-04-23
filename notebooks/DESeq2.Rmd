@@ -25,6 +25,7 @@ library(here)
 library(tximport)
 library(EnhancedVolcano)
 library(ggpubr)
+library(pcaMethods)
 ```
 
 ## Load data and helper functions
@@ -72,8 +73,8 @@ txi <- tximport(files, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRU
 Export TPM
 
 ```{r}
-txi$abundance %>% 
-  as_tibble(rownames = "ENSEMBL") %>% 
+txi$abundance %>%
+  as_tibble(rownames = "ENSEMBL") %>%
   write_csv(here("results/tpm.csv"))
 ```
 
@@ -87,12 +88,12 @@ coldata <- data.frame(samples = samples, assay = assay, condition = condition)
 
 Create `DESeqDataSet`
 ```{r}
-dds <- DESeqDataSetFromTximport(txi, coldata, design = ~ condition)
+dds <- DESeqDataSetFromTximport(txi, coldata, design = ~condition)
 dds <- DESeq2::estimateSizeFactors(dds)
 ```
 
 ```{r}
-counts(dds, normalize=T)["ENSG00000000003", ]
+counts(dds, normalize = T)["ENSG00000000003", ]
 ```
 # Run DESeq2
 
@@ -102,7 +103,7 @@ After we have created the `DESeqDataSet` object, we can subset this object to sa
 
 ```{r}
 IP_only <- dds[, colData(dds)$assay == "IP"]
-design(IP_only) <- formula(~ condition)
+design(IP_only) <- formula(~condition)
 IP_only <- DESeq(IP_only)
 
 IP_res <- results(IP_only, contrast = c("condition", "PTEN_KO", "WT"))
@@ -111,13 +112,53 @@ IP_res$symbols <- unname(symbols[rownames(IP_res)])
 write.csv(IP_res, "results/IP_res.csv")
 ```
 
+Plot PCA of IP samples only
+
+```{r}
+rld <- rlog(IP_only, blind = TRUE)
+```
+
+```{r}
+my_theme <- theme_bw() +
+    theme(
+        axis.title.x = element_text(size = 13),
+        axis.title.y = element_text(size = 13),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+    )
+
+theme_set(my_theme)
+
+row.names(colData(rld)) <- c("PTEN1", "PTEN2", "WT1", "WT2", "WT3", "PTEN3")
+
+rld_mat <- assay(rld)
+pca <- prcomp(t(rld_mat))
+
+rld.rv <- apply(rld_mat, 1, var)
+select <- order(rld.rv, decreasing = TRUE)[seq_len(min(500, length(rld.rv)))]
+
+rld.sel.pca <- pca(t(rld_mat[select, ]), method = "svd", nPcs = 5)
+rld.sel.scores <- as.data.frame(scores(rld.sel.pca))
+rld.sel.scores$Sample <- row.names(rld.sel.scores)
+rld.sel.scores$Genotype <- colData(rld)$condition
+rld.sel.summary <- summary(rld.sel.pca)
+
+rld.sel.scores %>%
+  ggplot(aes(x = PC1, y = PC2, color = Genotype)) +
+  geom_point(size = 3) +
+  geom_text_repel(aes(label = Sample)) +
+  xlab(paste("PC1:", round(rld.sel.summary[1, "PC1"] * 100), "% Variance Explained")) +
+  ylab(paste("PC2:", round(rld.sel.summary[1, "PC2"] * 100), "% Variance Explained"))
+ggsave("figures/IP_PCA.pdf", width = 5, height = 3.6)
+```
+
 ## Input samples only
 
 ```{r}
 Input_only <- dds[, colData(dds)$assay == "Input"]
 keep <- rowSums(counts(Input_only) >= 10) >= 5
-Input_only <- Input_only[keep,]
-design(Input_only) <- formula(~ condition)
+Input_only <- Input_only[keep, ]
+design(Input_only) <- formula(~condition)
 Input_only <- DESeq(Input_only)
 
 Input_res <- results(Input_only, contrast = c("condition", "PTEN_KO", "WT"))
@@ -131,14 +172,14 @@ write.csv(Input_res, "results/Input_res.csv")
 ```{r}
 WT_only <- dds[, colData(dds)$condition == "WT"]
 keep <- rowSums(counts(WT_only) >= 10) >= 5
-WT_only <- WT_only[keep,]
-design(WT_only) <- formula(~ assay)
+WT_only <- WT_only[keep, ]
+design(WT_only) <- formula(~assay)
 WT_only <- DESeq(WT_only)
 
 WT_res <- results(WT_only)
 WT_res$symbols <- unname(symbols[rownames(WT_res)])
 
-RE_WT <- WT_res %>% 
+RE_WT <- WT_res %>%
   as.data.frame() %>%
   mutate(RE = 2**log2FoldChange)
 write.csv(RE_WT, "results/RE_DESeq2/RE_WT.csv")
@@ -149,18 +190,18 @@ write.csv(RE_WT, "results/RE_DESeq2/RE_WT.csv")
 ```{r}
 PTEN_KO_only <- dds[, colData(dds)$condition == "PTEN_KO"]
 keep <- rowSums(counts(PTEN_KO_only) >= 10) >= 5
-PTEN_KO_only <- PTEN_KO_only[keep,]
-design(PTEN_KO_only) <- formula(~ assay)
+PTEN_KO_only <- PTEN_KO_only[keep, ]
+design(PTEN_KO_only) <- formula(~assay)
 PTEN_KO_only <- DESeq(PTEN_KO_only)
 
 PTEN_KO_res <- results(PTEN_KO_only)
 PTEN_KO_res$symbols <- unname(symbols[rownames(PTEN_KO_res)])
-RE_PTEN_KO <- PTEN_KO_res %>% 
+RE_PTEN_KO <- PTEN_KO_res %>%
   as.data.frame() %>%
   mutate(RE = 2**log2FoldChange)
 
-# RE_PTEN_KO <- RE_PTEN_KO %>% 
-#   mutate(X = rownames(RE_PTEN_KO)) 
+# RE_PTEN_KO <- RE_PTEN_KO %>%
+#   mutate(X = rownames(RE_PTEN_KO))
 
 # nuo_RE_normalized <- read.csv("results/RE_quant/nuo_RE_normalized.csv")
 # rowMeans(nuo_RE_normalized[, c("X4_7", "X4_9", "X95_3")], na.rm = TRUE)
@@ -169,12 +210,12 @@ RE_PTEN_KO <- PTEN_KO_res %>%
 #   RE = rowMeans(nuo_RE_normalized[, c("X4_7", "X4_9", "X95_3")], na.rm = TRUE)
 # )
 
-# temp <- RE_PTEN_old %>% 
+# temp <- RE_PTEN_old %>%
 #   left_join(RE_PTEN_KO, by = "X")
 
 # temp %>% head()
 
-# temp %>% 
+# temp %>%
 #   ggplot(aes(x = RE.x, y = RE.y)) +
 #     geom_point() +
 #     geom_abline(slope = 1, intercept = 0) +
@@ -199,17 +240,17 @@ interaction_res$symbols <- unname(symbols[rownames(interaction_res)])
 ```{r}
 # The original log fold changes
 dds_interaction %>%
-  results() %>% 
-  as_tibble(rownames = "ENSEMBL") %>% 
-  mutate(symbol = symbols[rownames(dds_interaction)]) %>% 
-  mutate(gene_type = gene_types[rownames(dds_interaction)]) %>% 
+  results() %>%
+  as_tibble(rownames = "ENSEMBL") %>%
+  mutate(symbol = symbols[rownames(dds_interaction)]) %>%
+  mutate(gene_type = gene_types[rownames(dds_interaction)]) %>%
   write_csv(here("results/assayIP_conditionPTEN_KO_raw.csv"))
 
 # Shrink log fold changes, which is useful for ranking and visualization
 res_lfcShrink <- dds_interaction %>%
-  lfcShrink(coef="assayIP.conditionPTEN_KO", type="apeglm") %>%
-  as_tibble(rownames = "ENSEMBL") %>% 
-  mutate(symbol = symbols[rownames(dds_interaction)]) %>% 
+  lfcShrink(coef = "assayIP.conditionPTEN_KO", type = "apeglm") %>%
+  as_tibble(rownames = "ENSEMBL") %>%
+  mutate(symbol = symbols[rownames(dds_interaction)]) %>%
   mutate(gene_type = gene_types[rownames(dds_interaction)])
 
 res_lfcShrink %>% write_csv(here("results/assayIP_conditionPTEN_KO.csv"))
@@ -218,7 +259,7 @@ res_lfcShrink %>% write_csv(here("results/assayIP_conditionPTEN_KO.csv"))
 ## Individual gene counts
 You can visualize the distribution of individual genes using this function
 ```{r}
-plotCounts(dds_interaction, gene="ENSG00000139725", intgroup=c("assay", "condition"))
+plotCounts(dds_interaction, gene = "ENSG00000139725", intgroup = c("assay", "condition"))
 ```
 
 ## Functional interpretation
@@ -236,19 +277,19 @@ plot_ego(ego_for_plotting)
 Here we are using the `log2FoldChange * -log10(pvalue)` as the ranking metric for the gene set enrichment analysis
 ```{r}
 # Calculate the ranking metric
-res_lfcShrink <- res_lfcShrink %>% 
-  dplyr::filter(complete.cases(pvalue) & complete.cases(log2FoldChange)) %>% 
-  mutate(score = log2FoldChange * -log10(pvalue)) %>% 
+res_lfcShrink <- res_lfcShrink %>%
+  dplyr::filter(complete.cases(pvalue) & complete.cases(log2FoldChange)) %>%
+  mutate(score = log2FoldChange * -log10(pvalue)) %>%
   arrange(desc(score))
 
 # Order the genes in terms of the ranking metric
-geneList <- res_lfcShrink %>% 
-  mutate(log10pvalue = (-log10(pvalue))) %>% 
-  arrange(desc(log10pvalue)) %>% 
+geneList <- res_lfcShrink %>%
+  mutate(log10pvalue = (-log10(pvalue))) %>%
+  arrange(desc(log10pvalue)) %>%
   pull(log10pvalue)
-names(geneList) <- res_lfcShrink %>% 
-  mutate(log10pvalue = (-log10(pvalue))) %>% 
-  arrange(desc(log10pvalue)) %>% 
+names(geneList) <- res_lfcShrink %>%
+  mutate(log10pvalue = (-log10(pvalue))) %>%
+  arrange(desc(log10pvalue)) %>%
   pull(ENSEMBL)
 ```
 
@@ -262,7 +303,8 @@ ego3 <- gseGO(
   minGSSize = 100,
   maxGSSize = 500,
   pvalueCutoff = 0.05,
-  verbose = FALSE)
+  verbose = FALSE
+)
 
 dotplot(ego3)
 ```
@@ -274,25 +316,26 @@ dotplot(ego3)
 SFARI_genes <- read_csv(here("data/SFARI-Gene_genes_03-28-2024release_05-28-2024export.csv"))
 
 # filter for genes with padj < 0.2 and also present in the SFARI gene list
-SFARI_plotting <- res_lfcShrink %>% 
-  filter(ENSEMBL %in% SFARI_genes[["ensembl-id"]]) %>% 
-  filter(padj < 0.2) %>% 
+SFARI_plotting <- res_lfcShrink %>%
+  filter(ENSEMBL %in% SFARI_genes[["ensembl-id"]]) %>%
+  filter(padj < 0.2) %>%
   left_join(SFARI_genes, join_by(ENSEMBL == `ensembl-id`))
 ```
 
 ```{r}
 SFARI_plotting %>%
-  mutate(`gene-score` = if_else(is.na(`gene-score`), 3, `gene-score`)) %>% 
+  mutate(`gene-score` = if_else(is.na(`gene-score`), 3, `gene-score`)) %>%
   ggplot(aes(x = reorder(symbol, log2FoldChange), y = log2FoldChange, fill = -log10(pvalue))) +
-    geom_bar(stat = "identity") +
-    scale_fill_gradient() +
-    theme(
-      axis.text.x = element_text(
-        angle = 90, vjust = 0.5, hjust=1, 
-        color=ifelse(SFARI_plotting[["gene-score"]] == 1,"red", "black")),
-      axis.title.x = element_blank()
-      ) +
-    ggtitle("Log2 fold changes of ASD-risk genes")
+  geom_bar(stat = "identity") +
+  scale_fill_gradient() +
+  theme(
+    axis.text.x = element_text(
+      angle = 90, vjust = 0.5, hjust = 1,
+      color = ifelse(SFARI_plotting[["gene-score"]] == 1, "red", "black")
+    ),
+    axis.title.x = element_blank()
+  ) +
+  ggtitle("Log2 fold changes of ASD-risk genes")
 ```
 
 
@@ -316,7 +359,7 @@ EnhancedVolcano(
   pCutoff = 0.05,
   xlim = c(-10, 10),
   ylim = c(0, 40),
-  drawConnectors = TRUE,widthConnectors = 0.75
+  drawConnectors = TRUE, widthConnectors = 0.75
 )
 
 EnhancedVolcano(
@@ -352,19 +395,19 @@ Input_res <- Input_res[keep, ]
 temp <- data.frame(
   IP = IP_res$log2FoldChange,
   Input = Input_res$log2FoldChange
-) %>% 
+) %>%
   mutate(
     IP = 2**IP,
     Input = 2**Input
   )
 
-temp %>% 
+temp %>%
   ggplot(aes(x = Input, y = IP)) +
   geom_point() +
   scale_x_continuous(limits = c(0, 5)) +
   scale_y_continuous(limits = c(0, 5)) +
   xlab("RE ")
-  stat_cor()
+stat_cor()
 ```
 
 ### WT vs PTEN_KO
@@ -377,7 +420,7 @@ interaction_res <- interaction_res[keep, ]
 temp <- data.frame(
   WT = WT_res$log2FoldChange,
   PTEN_KO = PTEN_KO_res$log2FoldChange
-) %>% 
+) %>%
   mutate(
     WT = 2**WT,
     PTEN_KO = 2**PTEN_KO
@@ -385,10 +428,11 @@ temp <- data.frame(
 
 rownames(temp) <- rownames(interaction_res)
 
-temp <- temp %>% 
+temp <- temp %>%
   mutate(
     significant = interaction_res$padj < 0.05,
-    symbols = interaction_res$symbols)
+    symbols = interaction_res$symbols
+  )
 
 temp$significant[is.na(temp$significant)] <- FALSE
 temp$symbols <- ifelse(temp$symbols %in% c("RHOF", "TSPAN4"), temp$symbols, "")
