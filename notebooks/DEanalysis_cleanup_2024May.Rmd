@@ -1,0 +1,341 @@
+---
+title: "DEanalysis_cleanup_2024May"
+author: "Yifang Weng"
+date: "2024-05-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(DESeq2)
+library(tidyverse)
+library(RColorBrewer)
+library(pheatmap)
+library(DEGreport)
+library(tximport)
+library(ggplot2)
+library(ggrepel)
+library(pcaMethods)
+library(apeglm)
+library(EnhancedVolcano)
+library(enrichplot)
+library(DOSE)
+```
+
+###setting up data
+```{r}
+## sample list that contains all information about the sample. I made it manually in excel
+sample_list <- read.table("sample_list.csv", header=TRUE, sep=",")
+rownames(sample_list)<- sample_list$Sample
+
+## List all directories containing data  
+files <- list.files(path = "./data", full.names = T)
+```
+###setting up annotation 
+```{r}
+# Load the tx to ensemlID and tx to gene table. Merge them and rename the columns
+tx2ensemblID <- read.table("tx_to_ensemblID_v45_egfp.tsv",stringsAsFactors = F)
+tx2Gene <- read.table("tx_to_gene_v45_egfp (1).tsv",stringsAsFactors = F)
+tx2gene <- merge(tx2ensemblID, tx2Gene, by="V1")
+#name the columns in the list
+names(tx2gene) <- c("tx_id", "ensgene", "symbol")
+# Take a look at it 
+tx2gene %>% View()
+```
+
+###run tximport to obtain the counts
+```{r}
+# Run tximport
+txi <- tximport(files, type="salmon", tx2gene=tx2gene, ignoreAfterBar = TRUE)
+
+attributes(txi)
+
+# Look at the counts
+txi$counts %>% View()
+
+#add row names
+ddsTxi <- DESeqDataSetFromTximport(txi,
+                                   colData = sample_list,
+                                   design = ~Group)
+
+#Set up levels for downstream comparison
+colData(ddsTxi)$Genotype<-factor(colData(ddsTxi)$Genotype,
+                               levels=c("WT", "PTEN_KO"))
+colData(ddsTxi)$SampleType<-factor(colData(ddsTxi)$SampleType,
+                               levels=c("Input", "IP"))
+
+colData(ddsTxi)$Group<-factor(colData(ddsTxi)$Group,
+                               levels=c("WT_Input", "PTEN_KO_Input", "WT_IP", "PTEN_KO_IP"))
+
+View(counts(ddsTxi))
+###run DESEQ2
+dds <- DESeq(ddsTxi)
+#dds$group <- factor(paste0(dds$Genotype, dds$SampleType))
+resultsNames(dds)
+
+```
+
+###normalization for dds and save the normalized counts after dds
+```{r}
+## Check the size factors
+normalizationFactors(dds)
+## Total number of raw counts per sample
+colSums(counts(dds))
+## Total number of normalized counts per sample
+colSums(counts(dds, normalized=T))
+## plot dispersion plot to see whether my data is a good fit for the DESeq2 model. The data should scatter around the curve
+plotDispEsts(dds)
+
+# Likelihood ratio test; i don't really need it 
+dds_lrt <- DESeq(dds, test="LRT", reduced = ~ 1)
+
+
+## add names of the columns to txi$counts
+colnames(txi$counts) <- c("PTEN1_Input", "PTEN1_IP", "PTEN2_Input", "PTEN2_IP", "WT1_Input", "WT1_IP", "WT2_Input", "WT2_IP", "WT3_Input", "WT3_IP", "PTEN3_Input", "PTEN3_IP")
+
+#save normalized counts after dds 
+
+normalized_counts <- as.data.frame(counts(dds, normalized=TRUE))
+normalized_counts$gene_name <- tx2gene$symbol[match(rownames(normalized_counts), tx2gene$ensgene)]
+write.table(normalized_counts, file="normalized_counts.txt", sep="\t", quote=F, col.names=NA)
+
+```
+
+###setting up comparison between WT and PTEN KO for input samples 
+```{r}
+#create DESeqResults object
+resInput <- results(dds, contrast=c("Group", "PTEN_KO_Input", "WT_Input"),alpha = 0.05)
+#change to data.frame format
+resInput %>% 
+data.frame() %>% 
+View()
+# Filter genes below the low mean threshold
+resInput <- resInput[!is.na(resInput$pvalue) & resInput$baseMean > 0, ]
+```
+
+###lfc shrinkage, MA plot, and save the results
+```{r}
+resInput_unshrunken <- resInput
+resInput <- lfcShrink(dds, coef="Group_PTEN_KO_Input_vs_WT_Input", type="apeglm")
+
+# MA plot using unshrunken fold changes
+plotMA(resInput_unshrunken, ylim=c(-2,2))
+# MA plot using shrunken fold changes
+plotMA(resInput, ylim=c(-9,7.5))
+
+## Summarize results
+summary(resInput, alpha = 0.05)
+as.data.frame(resInput)
+```
+
+###PCA
+```{r}
+##QC and exploratory analysis 
+
+### Transform counts for data visualization. The rlog transformation of the normalized counts is only necessary for these visualization methods during this quality assessment. We will not be using these tranformed counts for determining differential expression
+rld <- rlog(dds, blind=TRUE)
+
+### Plot PCA 
+plotPCA(rld, intgroup="Genotype")
+plotPCA(rld, intgroup="SampleType")
+
+# Input is a matrix of log transformed values
+ rld <- rlog(dds, blind=T)
+ rld_mat <- assay(rld)
+ pca <- prcomp(t(rld_mat))
+ # Create data frame with metadata and PC3 and PC4 values for input to ggplot
+ df <- cbind(Sample=sample_list$Sample,Genotype=sample_list$Genotype, SampleType=sample_list$SampleType, pca$x)
+ rld_summary <- summary(pca)
+ 
+rld.rv <- apply(rld_mat, 1, var)
+select <- order(rld.rv, decreasing=T)[seq_len(min(500, length(rld.rv)))] #chooses top 500 or all if <500
+
+# top 500 features
+rld.sel.pca <- pca(t(rld_mat[select,]),method="svd",nPcs=5)
+rld.sel.scores <- as.data.frame(scores(rld.sel.pca))
+rld.sel.scores$Sample <- row.names(rld.sel.scores)
+rld.sel.scores$Genotype <- colData(dds)$Genotype
+rld.sel.scores$SampleType <- colData(dds)$SampleType
+rld.sel.summary <- summary(rld.sel.pca)
+
+ggplot(rld.sel.scores, aes(x=PC1, y=PC2, color = Genotype, shape= SampleType)) + geom_point(size=3) + 
+    geom_text_repel(aes(label = Sample)) + 
+    xlab(paste("PC1:",round(rld.sel.summary[1,"PC1"]*100),"% Variance Explained")) + 
+    ylab(paste("PC2:",round(rld.sel.summary[1,"PC2"]*100),"% Variance Explained")) +
+    theme_bw() + ggtitle("PCA plot: Top 500 features")
+ 
+###Hierarchical Clustering 
+### Extract the rlog matrix from the object. assay() (from the SummarizedExperiment package) that converts the data in a DESeqTransform object to a simple 2-dimensional data structure (a matrix in this case)
+rld_mat <- assay(rld)    
+### Compute pairwise correlation values
+rld_cor <- cor(rld_mat)    ## cor() is a base R function
+## check the output of cor(), make note of the row names and column names
+head(rld_cor)
+head(dds)
+
+
+### Plot heatmap using the correlation matrix and the metadata object
+pheatmap(rld_cor)
+```
+
+
+###Prepare the data frame for plotting # of upregulated and downregulated genes
+```{r}
+# filter for genes with padj <0.05
+filtered_resInput <- subset(resInput, padj < 0.05)
+
+data_for_plot <- data.frame(
+  Category = ifelse(filtered_resInput$log2FoldChange < 0, "Downregulated", "Upregulated"),
+  Value = ifelse(filtered_resInput$log2FoldChange < 0, abs(filtered_resInput$log2FoldChange), filtered_resInput$log2FoldChange)
+)
+# Set the factor levels for Category to ensure the correct order
+data_for_plot$Category <- factor(data_for_plot$Category, levels = c("Upregulated", "Downregulated"))
+
+# Plotting the violin plot for upregulated and downregulated genes
+violin <- ggplot(data_for_plot, aes(x = Category, y = Value, fill = Category)) +
+  geom_violin(trim = FALSE) + # Trim set to FALSE shows the full distribution +
+  stat_summary(fun = median, geom = "crossbar", width = 0.1, color = "white", fatten = 2) + # Adds median points +
+  labs(title = "Distribution of Gene Expression Changes",
+       x = "Regulation",
+       y = "Absolute Log2 Fold Change") +
+  theme_minimal() +
+  scale_fill_manual(values = c("darkolivegreen4", "tan3")) + # Colors for Upregulated and Downregulated
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) # Adjust x-axis text angle if necessary
+
+
+# Calculate the number of genes in each category and plot boxplot for upregulated and downregulated genes
+counts1 <- as.data.frame(table(data_for_plot$Category))
+names(counts1) <- c("Category", "Freq")
+# Plotting the box plot with specified y-axis limits and adding gene counts
+boxplot_counts <- ggplot(data_for_plot, aes(x = Category, y = Value, fill = Category)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("tan3", "darkolivegreen4")) +
+  labs(title = "Distribution of Gene Expression Changes",
+       x = "",
+       y = "Absolute Log2 Fold Change") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(hjust = 0.5)) +
+ geom_text(data = counts1, aes(x = Category, y = max(data_for_plot$Value) * 1.05, label = Freq), 
+          position = position_dodge(width = 0.75), vjust = -0.5,  # Increase this value if needed
+          size = 3)
+
+```
+
+###check for downstream pathway expression 
+```{r}
+#look at expression related to downstream pathways 
+library(readxl)
+library("RColorBrewer")
+library(ggplot2)
+library(gplots)
+
+#look at expression related to neuronal ID
+neuro_genes <- read_excel("C:/Users/octav/OneDrive - University of Toronto/Trap-Seq/From Salmon/References/neuro genes Ellis.xlsx")
+
+finaldata_neuro<-normalized_counts[normalized_counts$gene_name %in% neuro_genes$Gene, ]
+rownames(finaldata_neuro)<-finaldata_neuro$gene_name
+#convert tibble to df so I can change the row names
+finaldata_neuro_df <- as.data.frame(finaldata_neuro)
+rownames(finaldata_neuro_df) <- finaldata_neuro_df$gene_name
+
+#clean up columns
+finaldata_input_neuro<-finaldata_neuro_df[-c(2,4,6,8,10,12,13)]
+finaldata_input_neuro<-data.matrix(finaldata_input_neuro)
+# Specify your new column order
+new_order <- c(3, 4, 5, 1, 2, 6)  # Adjust this based on your specific desired order
+# Reorder the columns of finaldata according to new_order
+finaldata_reordered_neuro <- finaldata_input_neuro[, new_order]
+# Example column names in desired order
+new_order_names <- c("WT1_Input", "WT2_Input", "WT3_Input", "PTEN1_Input", "PTEN2_Input", "PTEN3_Input")  # Adjust to your column names
+# Reorder the columns of finaldata according to the names in new_order_names
+finaldata_reordered_neuro <- finaldata_input_neuro[, new_order_names]
+
+colors<-colorRampPalette(c('darkolivegreen4','white','tan3'))
+heatmap.2(finaldata_reordered_neuro,Rowv=FALSE, Colv=FALSE, dendrogram='none', scale='row', trace='none', col=colors, margins=c(5,8),cexCol=0.8)
+dev.copy(tiff,'Inputneuro_20240502.tiff')
+dev.off()
+```
+
+###filter for padj<0.05
+```{r}
+### Set thresholds
+padj.cutoff <- 0.05
+# Create a tibble of results
+resInput_tb <- resInput %>%
+  data.frame() %>%
+  rownames_to_column(var="gene") %>% 
+  as_tibble()
+# Subset the tibble to keep only significant genes
+sigInput <- resInput_tb %>%
+        dplyr::filter(padj < padj.cutoff)
+sigInput
+```
+
+###Plotting signicant DE genes
+```{r}
+## First convert normalized_counts to a data frame and transfer the row names to a new column called "gene"
+normalized_counts <- counts(dds, normalized=T) %>% 
+                     data.frame() %>%
+                     rownames_to_column(var="gene") 
+
+
+# Next, merge together (ensembl IDs) the normalized counts data frame with a subset of the annotations in the tx2gene data frame (only the columns for ensembl gene IDs and gene symbols)
+grch38annot <- tx2gene %>% 
+               dplyr::select(ensgene, symbol) %>% 
+               dplyr::distinct()
+
+## This will bring in a column of gene symbols
+normalized_counts <- merge(normalized_counts, grch38annot, by.x="gene", by.y="ensgene")  
+# Now create a tibble for the normalized counts
+normalized_counts <- normalized_counts %>%
+                     as_tibble()
+normalized_counts
+
+# Find the Ensembl ID of PTEN
+grch38annot[grch38annot$symbol == "CAMK4", "ensgene"]
+
+# Plot expression for single gene
+plotCounts(dds, gene="ENSG00000152495.11", intgroup="Genotype")
+
+# Save plotcounts to a data frame object
+d <- plotCounts(dds, gene="ENSG00000152495.11", intgroup="Group", returnData=TRUE)
+
+# Plot the MOV10 normalized counts, using the samplenames (rownames(d) as labels)
+ggplot(d, aes(x = Group, y = count, color = Group)) + 
+    geom_point(position=position_jitter(w = 0.1,h = 0)) +
+    geom_text_repel(aes(label = rownames(d))) + 
+    theme_bw() +
+    ggtitle("CAMK4") +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+###volcano plot
+```{r}
+##using enhanced volcano
+V <- EnhancedVolcano(resInput,
+    lab=tx2gene$symbol[match(rownames(resInput),tx2gene$ensgene)],x="log2FoldChange",y="padj",
+                          title="PTEN_KO vs WT - shrunken,apeglm",pCutoff=0.05,legendPosition="right",subtitle="",axisLabSize=10, labSize = 3)
+
+
+V <- EnhancedVolcano(resInput,
+    lab="",x="log2FoldChange",y="padj",
+                          title="PTEN_KO vs WT - shrunken,apeglm",pCutoff=0.05,legendPosition="right",subtitle="",axisLabSize=10, labSize = 3)
+
+
+resInput_df <- as.data.frame(resInput) 
+
+resInput_df %>% 
+  arrange(resInput_df$log2FoldChange) 
+
+resInput_df$gene_name <- geneID2name$gene_name[match(substring(rownames(resInput_df),1,15), geneID2name$gene_id)]
+
+write.csv(resInput_df, "C:/Users/octav/OneDrive - University of Toronto/Trap-Seq/PTEN_WT_INPUT_20240610.csv", row.names=FALSE)
+
+
+sigInput$gene_name <- tx2gene$symbol[match(sigInput$gene, tx2gene$ensgene)]
+write.csv(sigInput, "C:/Users/octav/OneDrive - University of Toronto/Trap-Seq/PTEN_WT_INPUT_sigInput_20240502.csv", row.names=FALSE)
+
+
+```
+
