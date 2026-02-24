@@ -1,0 +1,439 @@
+---
+title: "snRNA-seq Processing: FCD vs Control (GSE268807)"
+author: "Nuo Xu"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+  html_notebook:
+    toc: true
+    number_sections: true
+    theme: readable
+---
+
+# Setup
+
+## Load libraries
+```{r load-packages, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(Matrix)
+library(Seurat)
+library(harmony)
+library(scDblFinder)
+library(SingleCellExperiment)
+library(BiocParallel)
+library(MAST)
+library(ggrepel)
+library(patchwork)
+library(here)
+```
+
+## Global parameters
+```{r global-params}
+DATA_DIR    <- "/Users/xunuo/Library/CloudStorage/OneDrive-SharedLibraries-UniversityofToronto/Yi Weng - Trap-seq analysis/trap_seq/data/galvao/GSE268807"
+RESULTS_DIR <- here::here("results/snrnaseq_FCD")
+dir.create(RESULTS_DIR, showWarnings = FALSE, recursive = TRUE)
+
+sample_meta <- tibble(
+  sample_id    = c("G120_D_FL", "G120_D_TL", "G120_F1_N", "G129_D",
+                   "G133_D_FL", "G133_N_FL", "G150_D", "G159_D",
+                   "G171_D", "G187_D", "G210_D"),
+  patient      = c("G120", "G120", "G120", "G129", "G133", "G133",
+                   "G150", "G159", "G171", "G187", "G210"),
+  condition    = c("FCD", "FCD", "Control", "FCD", "FCD", "Control",
+                   "FCD", "FCD", "FCD", "FCD", "FCD"),
+  brain_region = c("Frontal", "Temporal", "Frontal", "Parietal",
+                   "Frontal", "Frontal", "Frontal", "Frontal",
+                   "Frontal", "Temporal", "Temporo-Occipital"),
+  seq_batch    = c("09/2023", "09/2023", "10/2022", "07/2023",
+                   "09/2023", "09/2023", "07/2023", "07/2023",
+                   "07/2023", "07/2023", "07/2023")
+)
+# Source: data/galvao/metadata.tsv
+# FL = Frontal Lobe, TL = Temporal Lobe, F1 = Frontal (batch 10/2022)
+# Control samples: G120_F1_N, G133_N_FL
+# FCD samples: all _D_ files
+
+sample_meta
+```
+
+# X/Y Gene List
+
+Extract X/Y chromosome genes once from the features file (used later to exclude from DEG results).
+```{r xy-genes}
+features_df <- read_tsv(
+  file.path(DATA_DIR, "GSE268807_G120_D_FL_features.tsv.gz"),
+  col_names = c("ensembl_id", "gene_symbol", "feature_type", "chromosome", "start", "end"),
+  show_col_types = FALSE
+)
+gex_features <- filter(features_df, feature_type == "Gene Expression")
+xy_genes     <- filter(gex_features, chromosome %in% c("chrX", "chrY")) %>% pull(gene_symbol)
+
+cat("Total GEX features:", nrow(gex_features), "\n")
+cat("X/Y genes:", length(xy_genes), "\n")
+# Expected: ~36,601 GEX features, ~1,259 X/Y genes
+```
+
+# Data Loading Helper
+
+```{r load-helper}
+load_sample_gex <- function(sample_id, data_dir) {
+  prefix <- file.path(data_dir, paste0("GSE268807_", sample_id))
+
+  mat <- ReadMtx(
+    mtx      = paste0(prefix, "_matrix.mtx.gz"),
+    cells    = paste0(prefix, "_barcodes.tsv.gz"),
+    features = paste0(prefix, "_features.tsv.gz"),
+    feature.column = 2,
+    cell.column    = 1
+  )
+
+  feat <- read_tsv(
+    paste0(prefix, "_features.tsv.gz"),
+    col_names = c("ensembl_id", "gene_symbol", "feature_type", "chromosome", "start", "end"),
+    show_col_types = FALSE
+  )
+
+  gex_idx <- which(feat$feature_type == "Gene Expression")
+  mat_gex  <- mat[gex_idx, ]
+
+  # Fallback: if row names are not unique, use Ensembl IDs
+  if (any(duplicated(rownames(mat_gex)))) {
+    warning(sample_id, ": duplicate gene symbols found — using make.unique()")
+    rownames(mat_gex) <- make.unique(feat$gene_symbol[gex_idx])
+  }
+
+  mat_gex
+}
+```
+
+# Per-Sample Processing
+
+QC thresholds: 400 < nFeature_RNA < 7000, 500 < nCount_RNA < 50000, percent.mt < 15.
+Doublet detection via scDblFinder. Individual UMAP per sample.
+
+```{r per-sample-loop, message=FALSE, warning=FALSE, fig.width=10, fig.height=4}
+seurat_list <- list()
+
+for (sid in sample_meta$sample_id) {
+  cat("\n===", sid, "===\n")
+  meta_row <- filter(sample_meta, sample_id == sid)
+
+  # --- Load GEX matrix ---
+  mat <- load_sample_gex(sid, DATA_DIR)
+  cat("Cells (pre-filter):", ncol(mat), " | Genes:", nrow(mat), "\n")
+
+  # --- Create Seurat object ---
+  so <- CreateSeuratObject(mat, min.cells = 3, min.features = 200, project = sid)
+  so$sample_id    <- sid
+  so$patient      <- meta_row$patient
+  so$condition    <- meta_row$condition
+  so$brain_region <- meta_row$brain_region
+  so$seq_batch    <- meta_row$seq_batch
+
+  # --- Mitochondrial percentage ---
+  so[["percent.mt"]] <- PercentageFeatureSet(so, pattern = "^MT-")
+
+  # --- Violin plot pre-filter ---
+  p_pre <- VlnPlot(so,
+    features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+    ncol = 3, pt.size = 0) +
+    plot_annotation(title = paste(sid, "— pre-QC"))
+  print(p_pre)
+
+  # --- QC filtering ---
+  so <- subset(so,
+    subset = nFeature_RNA > 400 & nFeature_RNA < 7000 &
+             nCount_RNA  > 500 & nCount_RNA  < 50000 &
+             percent.mt  < 15)
+  cat("Cells (post-QC filter):", ncol(so), "\n")
+
+  # --- Doublet detection (scDblFinder) ---
+  set.seed(42)
+  sce <- scDblFinder(as.SingleCellExperiment(so), BPPARAM = SerialParam())
+  so$scDblFinder.class <- sce$scDblFinder.class
+  so <- subset(so, scDblFinder.class == "singlet")
+  cat("Cells (post-doublet removal):", ncol(so), "\n")
+
+  # --- Standard single-sample pipeline ---
+  so <- NormalizeData(so, verbose = FALSE) %>%
+    FindVariableFeatures(nfeatures = 2000, verbose = FALSE) %>%
+    ScaleData(vars.to.regress = "percent.mt", verbose = FALSE) %>%
+    RunPCA(npcs = 50, verbose = FALSE)
+
+  p_elbow <- ElbowPlot(so, ndims = 50) +
+    geom_vline(xintercept = 40, linetype = "dashed", color = "red") +
+    ggtitle(paste(sid, "— elbow plot"))
+  print(p_elbow)
+
+  so <- RunUMAP(so, dims = 1:40, verbose = FALSE) %>%
+    FindNeighbors(dims = 1:40, verbose = FALSE) %>%
+    FindClusters(algorithm = 3, resolution = 1.2, verbose = FALSE)
+  # algorithm = 3 = SLM; fall back to algorithm = 1 (Louvain) if SLM unavailable
+
+  p_umap <- DimPlot(so, reduction = "umap", label = TRUE) +
+    ggtitle(paste(sid, "— UMAP (clusters)"))
+  print(p_umap)
+
+  seurat_list[[sid]] <- so
+}
+```
+
+# Merge All Samples
+
+```{r merge-samples}
+merged_so <- merge(
+  seurat_list[[1]],
+  y           = seurat_list[2:length(seurat_list)],
+  add.cell.ids = sample_meta$sample_id,
+  project     = "GSE268807_FCD"
+)
+# Metadata columns (sample_id, patient, condition, brain_region, seq_batch)
+# are preserved by merge()
+
+cat("Total cells after merge:", ncol(merged_so), "\n")
+table(merged_so$condition)
+table(merged_so$sample_id)
+```
+
+# Harmony Integration (on NormalizeData)
+
+## Pre-integration processing
+```{r harmony-preprocessing, message=FALSE, warning=FALSE}
+merged_so <- NormalizeData(merged_so, verbose = FALSE) %>%
+  FindVariableFeatures(nfeatures = 2000, verbose = FALSE) %>%
+  ScaleData(vars.to.regress = "percent.mt", verbose = FALSE) %>%
+  RunPCA(npcs = 50, verbose = FALSE)
+
+ElbowPlot(merged_so, ndims = 50) +
+  geom_vline(xintercept = 40, linetype = "dashed", color = "red") +
+  ggtitle("Merged — elbow plot (pre-Harmony)")
+```
+
+## Run Harmony
+```{r run-harmony, message=FALSE, warning=FALSE}
+merged_so <- RunHarmony(
+  merged_so,
+  group.by.vars = "sample_id",
+  reduction.use     = "pca",
+  dims.use      = 1:50,
+  verbose       = FALSE
+)
+
+merged_so <- RunUMAP(merged_so, reduction = "harmony", dims = 1:40, verbose = FALSE) %>%
+  FindNeighbors(reduction = "harmony", dims = 1:40, verbose = FALSE) %>%
+  FindClusters(algorithm = 3, resolution = 1.2, verbose = FALSE)
+```
+
+## UMAP panels after Harmony
+```{r harmony-umap, fig.width=15, fig.height=5}
+p1 <- DimPlot(merged_so, group.by = "condition",    label = FALSE) + ggtitle("Condition")
+p2 <- DimPlot(merged_so, group.by = "sample_id",    label = FALSE) + ggtitle("Sample")
+p3 <- DimPlot(merged_so, group.by = "seurat_clusters", label = TRUE)  + ggtitle("Clusters")
+
+p1 | p2 | p3
+```
+
+```{r harmony-umap-patient-region, fig.width=10, fig.height=5}
+p4 <- DimPlot(merged_so, group.by = "patient",      label = FALSE) + ggtitle("Patient")
+p5 <- DimPlot(merged_so, group.by = "brain_region", label = FALSE) + ggtitle("Brain Region")
+
+p4 | p5
+```
+
+# SCTransform Normalization
+
+Regress out sequencing batch, brain region, and mitochondrial percentage.
+```{r sctransform, message=FALSE, warning=FALSE}
+# Seurat v5: JoinLayers before SCTransform if layers were split after merge
+if (inherits(merged_so[["RNA"]], "Assay5")) {
+  merged_so <- JoinLayers(merged_so)
+}
+
+merged_so <- SCTransform(
+  merged_so,
+  vars.to.regress = c("seq_batch", "brain_region", "percent.mt"),
+  vst.flavor      = "v2",
+  verbose         = FALSE
+)
+```
+
+## PCA → Harmony → UMAP on SCT
+```{r sct-pca-harmony, message=FALSE, warning=FALSE}
+merged_so <- RunPCA(merged_so, npcs = 50, verbose = FALSE)
+
+ElbowPlot(merged_so, ndims = 50) +
+  geom_vline(xintercept = 40, linetype = "dashed", color = "red") +
+  ggtitle("Merged SCT — elbow plot")
+
+merged_so <- RunHarmony(
+  merged_so,
+  group.by.vars = "sample_id",
+  reduction     = "pca",
+  dims.use      = 1:50,
+  verbose       = FALSE
+) %>%
+  RunUMAP(reduction = "harmony", dims = 1:40, verbose = FALSE) %>%
+  FindNeighbors(reduction = "harmony", dims = 1:40, verbose = FALSE) %>%
+  FindClusters(algorithm = 3, resolution = 1.2, verbose = FALSE)
+```
+
+## UMAP panels after SCT + Harmony
+```{r sct-umap, fig.width=15, fig.height=5}
+p1 <- DimPlot(merged_so, group.by = "condition",       label = FALSE) + ggtitle("Condition")
+p2 <- DimPlot(merged_so, group.by = "sample_id",       label = FALSE) + ggtitle("Sample")
+p3 <- DimPlot(merged_so, group.by = "seurat_clusters", label = TRUE)  + ggtitle("Clusters")
+
+p1 | p2 | p3
+```
+
+## Save integrated object
+```{r save-seurat}
+saveRDS(merged_so, file.path(RESULTS_DIR, "merged_sct_seurat.rds"))
+cat("Saved merged_sct_seurat.rds to", RESULTS_DIR, "\n")
+```
+
+# DEG Analysis
+
+## MAST (RNA assay)
+```{r degs-mast, message=FALSE, warning=FALSE}
+DefaultAssay(merged_so) <- "RNA"
+
+# Seurat v5: join RNA layers before FindMarkers
+if (inherits(merged_so[["RNA"]], "Assay5")) {
+  merged_so <- JoinLayers(merged_so, assay = "RNA")
+}
+
+Idents(merged_so) <- "condition"
+
+degs_mast <- FindMarkers(
+  merged_so,
+  ident.1        = "FCD",
+  ident.2        = "Control",
+  test.use       = "MAST",
+  min.pct        = 0.1,
+  logfc.threshold = 0,
+  verbose        = FALSE
+)
+
+degs_mast$gene <- rownames(degs_mast)
+
+# Filter: adjusted p-value < 0.05, exclude X/Y chromosome genes
+degs_mast_filtered <- degs_mast %>%
+  filter(p_val_adj < 0.05, !gene %in% xy_genes) %>%
+  arrange(p_val_adj)
+
+cat("MAST DEGs (FCD vs Control, padj<0.05, no X/Y):", nrow(degs_mast_filtered), "\n")
+head(degs_mast_filtered, 20)
+
+write_csv(degs_mast_filtered, file.path(RESULTS_DIR, "DEGs_MAST_FCD_vs_Control.csv"))
+```
+
+## Wilcoxon (SCT assay)
+```{r degs-wilcox, message=FALSE, warning=FALSE}
+DefaultAssay(merged_so) <- "SCT"
+
+# Required before FindMarkers with SCT in Seurat v5
+merged_so <- PrepSCTFindMarkers(merged_so, verbose = FALSE)
+
+Idents(merged_so) <- "condition"
+
+degs_wilcox <- FindMarkers(
+  merged_so,
+  ident.1        = "FCD",
+  ident.2        = "Control",
+  test.use       = "wilcox",
+  logfc.threshold = 0.25,
+  min.pct        = 0.1,
+  verbose        = FALSE
+)
+
+degs_wilcox$gene <- rownames(degs_wilcox)
+
+# Filter: adjusted p-value < 0.05, exclude X/Y chromosome genes
+degs_wilcox_filtered <- degs_wilcox %>%
+  filter(p_val_adj < 0.05, !gene %in% xy_genes) %>%
+  arrange(p_val_adj)
+
+cat("Wilcoxon DEGs (FCD vs Control, padj<0.05, no X/Y):", nrow(degs_wilcox_filtered), "\n")
+head(degs_wilcox_filtered, 20)
+
+write_csv(degs_wilcox_filtered, file.path(RESULTS_DIR, "DEGs_Wilcox_FCD_vs_Control.csv"))
+```
+
+# Visualizations
+
+## Volcano plot — MAST DEGs
+```{r volcano-mast, fig.width=9, fig.height=7}
+# Label top 20 genes by adjusted p-value
+top_genes <- degs_mast_filtered %>%
+  slice_min(p_val_adj, n = 20) %>%
+  pull(gene)
+
+degs_mast %>%
+  mutate(
+    sig   = p_val_adj < 0.05 & !gene %in% xy_genes,
+    label = if_else(gene %in% top_genes, gene, NA_character_)
+  ) %>%
+  ggplot(aes(x = avg_log2FC, y = -log10(p_val_adj), color = sig)) +
+  geom_point(alpha = 0.5, size = 1) +
+  geom_text_repel(aes(label = label), size = 3, max.overlaps = 30) +
+  scale_color_manual(values = c("grey70", "firebrick"), labels = c("NS", "Sig.")) +
+  geom_vline(xintercept = c(-0.25, 0.25), linetype = "dashed", color = "grey40") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
+  labs(
+    title  = "Volcano Plot: FCD vs Control (MAST)",
+    x      = "Average log2 Fold Change",
+    y      = "-log10(adjusted p-value)",
+    color  = NULL
+  ) +
+  theme_bw()
+```
+
+## DotPlot — canonical brain cell-type markers
+```{r dotplot-markers, fig.width=12, fig.height=6}
+canonical_markers <- list(
+  Excitatory_neurons = c("SATB2", "SLC17A7", "CAMK2A", "NRGN"),
+  Inhibitory_neurons = c("GAD1", "GAD2", "SLC32A1", "PVALB", "SST", "VIP"),
+  Astrocytes         = c("GFAP", "AQP4", "SLC1A2", "ALDH1L1"),
+  Oligodendrocytes   = c("MBP", "MOG", "MOBP", "PLP1"),
+  OPCs               = c("PDGFRA", "VCAN", "OLIG2"),
+  Microglia          = c("CX3CR1", "P2RY12", "IBA1", "TMEM119"),
+  Endothelial        = c("CLDN5", "PECAM1", "FLT1")
+)
+
+# Flatten to vector with cell type names
+marker_vec <- unlist(canonical_markers)
+
+DotPlot(merged_so,
+  features = unique(marker_vec),
+  group.by = "seurat_clusters"
+) +
+  RotatedAxis() +
+  ggtitle("Canonical cell-type markers by cluster")
+```
+
+## FeaturePlot — selected markers
+```{r featureplot-markers, fig.width=14, fig.height=10}
+selected_markers <- c("SATB2", "GAD1", "GFAP", "MBP", "PDGFRA", "CX3CR1")
+
+FeaturePlot(merged_so,
+  features = selected_markers,
+  ncol     = 3,
+  order    = TRUE
+) &
+  theme(legend.position = "right")
+```
+
+## UMAP by brain region and seq batch
+```{r umap-batch, fig.width=12, fig.height=5}
+p_region <- DimPlot(merged_so, group.by = "brain_region", label = FALSE) + ggtitle("Brain Region")
+p_batch  <- DimPlot(merged_so, group.by = "seq_batch",    label = FALSE) + ggtitle("Seq. Batch")
+
+p_region | p_batch
+```
+
+# Session Info
+```{r session-info}
+sessionInfo()
+```
